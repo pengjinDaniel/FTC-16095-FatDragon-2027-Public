@@ -16,10 +16,6 @@ public class DriveConstants {
             DcMotorSimple.Direction.FORWARD;
     public static DcMotorSimple.Direction rightBackMotorDirection =
             DcMotorSimple.Direction.FORWARD;
-
-    // Temporary value inherited from 2026 robot — must verify on 2027 hardware.
     public static double joystickDeadband = 0.03;
-
-    // Temporary value inherited from 2026 robot — must verify and retune on 2027 hardware.
     public static double strafingBalance = 1.1;
 }
