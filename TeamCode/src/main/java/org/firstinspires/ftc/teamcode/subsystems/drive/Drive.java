@@ -8,10 +8,10 @@ import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 
 public class Drive extends SubsystemBase {
-    private final DcMotorEx leftFrontMotor;
-    private final DcMotorEx leftBackMotor;
-    private final DcMotorEx rightFrontMotor;
-    private final DcMotorEx rightBackMotor;
+    public final DcMotorEx leftFrontMotor;
+    public final DcMotorEx leftBackMotor;
+    public final DcMotorEx rightFrontMotor;
+    public final DcMotorEx rightBackMotor;
 
     public Drive(HardwareMap hardwareMap) {
         leftFrontMotor = hardwareMap.get(DcMotorEx.class, DriveConstants.leftFrontMotorName);
