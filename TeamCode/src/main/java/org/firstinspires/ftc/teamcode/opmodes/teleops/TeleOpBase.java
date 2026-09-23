@@ -16,8 +16,12 @@ import org.firstinspires.ftc.teamcode.subsystems.transit.Transit;
 import org.firstinspires.ftc.teamcode.subsystems.transit.TransitConstants;
 import org.firstinspires.ftc.teamcode.subsystems.vision.Alliance;
 import org.firstinspires.ftc.teamcode.subsystems.vision.Vision;
+import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
+import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
+import org.firstinspires.ftc.robotcore.external.navigation.Pose2D;
 
 public abstract class TeleOpBase extends CommandOpMode {
+    private Drive drive;
     private Shooter shooter;
     private Intake intake;
     private Transit transit;
@@ -29,7 +33,7 @@ public abstract class TeleOpBase extends CommandOpMode {
 
     @Override
     public void initialize() {
-        Drive drive = new Drive(hardwareMap);
+        drive = new Drive(hardwareMap);
         shooter = new Shooter(hardwareMap);
         intake = new Intake(hardwareMap);
         transit = new Transit(hardwareMap);
@@ -47,7 +51,11 @@ public abstract class TeleOpBase extends CommandOpMode {
                 gamepadEx
         );
         drive.setDefaultCommand(new DriveCommand(drive, gamepadEx));
-        intake.setDefaultCommand(new IntakeCommand(intake, gamepadEx));
+        intake.setDefaultCommand(new IntakeCommand(intake, transit, gamepadEx));
+
+        new Trigger(
+                () -> gamepadEx.getButton(GamepadKeys.Button.RIGHT_BUMPER)
+        ).whenActive(intake::toggleFlower);
 
         new Trigger(
                 () -> gamepadEx.getTrigger(GamepadKeys.Trigger.RIGHT_TRIGGER)
@@ -59,6 +67,10 @@ public abstract class TeleOpBase extends CommandOpMode {
     public void run() {
         super.run();
 
+        Pose2D pose = drive.getPose();
+        telemetry.addData("Pinpoint X (in)", pose.getX(DistanceUnit.INCH));
+        telemetry.addData("Pinpoint Y (in)", pose.getY(DistanceUnit.INCH));
+        telemetry.addData("Pinpoint Heading (deg)", pose.getHeading(AngleUnit.DEGREES));
         telemetry.addData("Alliance", vision.getAlliance());
         telemetry.addData("Visible Tags", vision.getVisibleTagIds());
         telemetry.addData("Alliance Tag Visible", vision.hasVisibleAllianceTag());
@@ -94,7 +106,16 @@ public abstract class TeleOpBase extends CommandOpMode {
         telemetry.addData("Shooter Left", shooter.getLeftVelocity());
         telemetry.addData("Shooter Right", shooter.getRightVelocity());
         telemetry.addData("Shooter Ready", shooter.isReady());
+        telemetry.addData("Shooter Pitch", shooter.getPitchPosition());
+        telemetry.addData("Pitch Settled", shooter.isPitchReady());
         telemetry.addData("Aim Locked", autoAim.isLocked());
+        telemetry.addData("Position Hold Calibrated",
+                org.firstinspires.ftc.teamcode.subsystems.drive.DriveConstants.positionHoldCalibrated);
+        telemetry.addData("Pinpoint Status", drive.getPinpointStatus());
+        telemetry.addData("Translation Speed (in/s)", drive.getTranslationSpeedInchesPerSecond());
+        telemetry.addData("Position Locked", shootAssistCommand.isPositionLocked());
+        telemetry.addData("Position Error (in)", shootAssistCommand.getPositionErrorInches());
+        telemetry.addData("Manual Translation", shootAssistCommand.isManualTranslation());
         telemetry.addData("Shoot Requested", shootAssistCommand.isActive());
         telemetry.addData("Can Prepare", shootAssistCommand.canPrepareToFire());
         telemetry.addData("Can Fire", shootAssistCommand.canFire());
@@ -107,7 +128,33 @@ public abstract class TeleOpBase extends CommandOpMode {
                 100.0 * shootAssistCommand.getLimitOpenTimerProgress()
         );
         telemetry.addData("Intake Power", intake.getRequestedPower());
+        telemetry.addData("Ball Count", intake.getBallCount());
+        telemetry.addData("CDS Distance (cm)", intake.getDistanceCm());
+        telemetry.addData("CDS Ball Present", intake.isBallPresent());
+        telemetry.addData("Transit Power", transit.getRequestedPower());
         telemetry.addData("Limit Servo", transit.getState());
+        telemetry.addData("Limit Calibrated", transit.areLimitPositionsCalibrated());
+        telemetry.addData("Flower State", intake.getFlowerState());
+        telemetry.addData("Flower Calibrated", intake.areFlowerPositionsCalibrated());
         telemetry.update();
+    }
+
+    @Override
+    public void runOpMode() throws InterruptedException {
+        try {
+            super.runOpMode();
+        } finally {
+            if (drive != null) drive.stop();
+            if (shooter != null) shooter.stop();
+            if (intake != null) {
+                intake.stop();
+                intake.raiseFlower();
+            }
+            if (transit != null) {
+                transit.stopMotor();
+                transit.close();
+            }
+            if (vision != null) vision.stop();
+        }
     }
 }

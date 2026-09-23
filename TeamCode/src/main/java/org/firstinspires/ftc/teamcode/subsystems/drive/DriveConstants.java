@@ -1,5 +1,6 @@
 package org.firstinspires.ftc.teamcode.subsystems.drive;
 
+import com.qualcomm.hardware.gobilda.GoBildaPinpointDriver;
 import com.qualcomm.robotcore.hardware.DcMotorSimple;
 
 public class DriveConstants {
@@ -13,7 +14,24 @@ public class DriveConstants {
     public static DcMotorSimple.Direction rightFrontMotorDirection = DcMotorSimple.Direction.FORWARD;
     public static DcMotorSimple.Direction rightBackMotorDirection = DcMotorSimple.Direction.FORWARD;
     public static double joystickDeadband = 0.03;
-    public static double strafingBalance = 1.1;
+
+    public static String pinpointName = "pinpoint";
+    // Measure both offsets and verify both pod signs on the 2027 robot before enabling hold.
+    public static double pinpointXOffsetMm = 0.0;
+    public static double pinpointYOffsetMm = 0.0;
+    public static GoBildaPinpointDriver.EncoderDirection pinpointForwardPodDirection =
+            GoBildaPinpointDriver.EncoderDirection.FORWARD;
+    public static GoBildaPinpointDriver.EncoderDirection pinpointStrafePodDirection =
+            GoBildaPinpointDriver.EncoderDirection.FORWARD;
+    public static boolean positionHoldCalibrated = false;
+    public static double positionHoldKp = 0.04;
+    public static double positionHoldKi = 0.0;
+    public static double positionHoldKd = 0.0;
+    public static double positionHoldMaxPower = 0.25;
+    public static double positionLockEnterToleranceInches = 0.75;
+    public static double positionLockExitToleranceInches = 0.75;
+    public static double positionLockMaxSpeedInchesPerSecond = 2.0;
+    public static double positionLockStableTimeSeconds = 0.15;
 
     // Provisional starting values. Tune the yaw sign and gains on the 2027 robot.
     public static double autoAimKp = 0.02;

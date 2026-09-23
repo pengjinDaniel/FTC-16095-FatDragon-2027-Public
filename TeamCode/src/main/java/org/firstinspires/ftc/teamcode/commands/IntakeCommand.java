@@ -6,15 +6,18 @@ import com.arcrobotics.ftclib.gamepad.GamepadKeys;
 
 import org.firstinspires.ftc.teamcode.opmodes.teleops.TeleOpConstants;
 import org.firstinspires.ftc.teamcode.subsystems.intake.Intake;
+import org.firstinspires.ftc.teamcode.subsystems.transit.Transit;
 
 public class IntakeCommand extends CommandBase {
     private final Intake intake;
+    private final Transit transit;
     private final GamepadEx gamepadEx;
 
-    public IntakeCommand(Intake intake, GamepadEx gamepadEx) {
+    public IntakeCommand(Intake intake, Transit transit, GamepadEx gamepadEx) {
         this.intake = intake;
+        this.transit = transit;
         this.gamepadEx = gamepadEx;
-        addRequirements(intake);
+        addRequirements(intake, transit);
     }
 
     @Override
@@ -29,16 +32,20 @@ public class IntakeCommand extends CommandBase {
 
     @Override
     public void end(boolean interrupted) {
-        intake.idle();
+        intake.suspend();
+        transit.stopMotor();
     }
 
     private void updateIntakeRequest() {
         boolean intakeRequested = gamepadEx.getTrigger(GamepadKeys.Trigger.LEFT_TRIGGER)
                 > TeleOpConstants.triggerThreshold;
-        if (intakeRequested) {
-            intake.active();
+        boolean jamRequested = gamepadEx.getButton(GamepadKeys.Button.LEFT_BUMPER);
+        intake.updateInputs(intakeRequested, jamRequested);
+        if (jamRequested) {
+            transit.reverse();
         } else {
-            intake.idle();
+            transit.forward();
         }
+        transit.close();
     }
 }

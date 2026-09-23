@@ -2,11 +2,13 @@ package org.firstinspires.ftc.teamcode.commands;
 
 import com.arcrobotics.ftclib.command.CommandBase;
 import com.arcrobotics.ftclib.gamepad.GamepadEx;
+import com.arcrobotics.ftclib.gamepad.GamepadKeys;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
 import org.firstinspires.ftc.teamcode.subsystems.drive.AutoAimController;
 import org.firstinspires.ftc.teamcode.subsystems.drive.Drive;
 import org.firstinspires.ftc.teamcode.subsystems.drive.DriveConstants;
+import org.firstinspires.ftc.teamcode.subsystems.drive.PositionHoldController;
 import org.firstinspires.ftc.teamcode.subsystems.intake.Intake;
 import org.firstinspires.ftc.teamcode.subsystems.shooter.Shooter;
 import org.firstinspires.ftc.teamcode.subsystems.transit.Transit;
@@ -21,11 +23,13 @@ public class ShootAssistCommand extends CommandBase {
     private final Transit transit;
     private final Vision vision;
     private final AutoAimController autoAim;
+    private final PositionHoldController positionHold = new PositionHoldController();
     private final GamepadEx gamepadEx;
     private final ElapsedTime limitOpenTimer = new ElapsedTime();
 
     private boolean active;
     private boolean canPrepareToFire;
+    private boolean manualTranslation;
     private FiringState firingState = FiringState.IDLE;
 
     public enum FiringState {
@@ -58,9 +62,10 @@ public class ShootAssistCommand extends CommandBase {
     public void initialize() {
         active = true;
         shooter.idle();
-        intake.idle();
         transit.close();
         autoAim.reset();
+        positionHold.reset();
+        manualTranslation = false;
         resetFiringSequence(FiringState.WAITING);
     }
 
@@ -68,7 +73,27 @@ public class ShootAssistCommand extends CommandBase {
     public void execute() {
         double forward = applyDeadband(gamepadEx.getLeftY());
         double strafe = applyDeadband(gamepadEx.getLeftX());
-        double autoAimTurn = updateShootRequest();
+        manualTranslation = forward != 0.0 || strafe != 0.0;
+        if (manualTranslation) {
+            positionHold.reset();
+        } else {
+            positionHold.update(drive.getPose(), drive.getPinpointStatus(),
+                    drive.getTranslationSpeedInchesPerSecond());
+            forward = positionHold.getForwardPower();
+            strafe = positionHold.getStrafePower();
+        }
+
+        boolean intakeRequested = gamepadEx.getTrigger(GamepadKeys.Trigger.LEFT_TRIGGER)
+                > org.firstinspires.ftc.teamcode.opmodes.teleops.TeleOpConstants.triggerThreshold;
+        boolean jamRequested = gamepadEx.getButton(GamepadKeys.Button.LEFT_BUMPER);
+        intake.updateInputs(intakeRequested, jamRequested);
+        if (jamRequested) {
+            transit.reverse();
+        } else {
+            transit.forward();
+        }
+
+        double autoAimTurn = updateShootRequest(jamRequested);
 
         drive.moveRobot(forward, strafe, autoAimTurn);
     }
@@ -77,6 +102,8 @@ public class ShootAssistCommand extends CommandBase {
     public void end(boolean interrupted) {
         active = false;
         autoAim.reset();
+        positionHold.reset();
+        manualTranslation = false;
         resetFiringSequence(FiringState.IDLE);
         shooter.idle();
         drive.stop();
@@ -96,6 +123,18 @@ public class ShootAssistCommand extends CommandBase {
 
     public FiringState getFiringState() {
         return firingState;
+    }
+
+    public boolean isPositionLocked() {
+        return positionHold.isLocked();
+    }
+
+    public double getPositionErrorInches() {
+        return positionHold.getPositionErrorInches();
+    }
+
+    public boolean isManualTranslation() {
+        return manualTranslation;
     }
 
     public double getLimitOpenTimerElapsedSeconds() {
@@ -121,7 +160,14 @@ public class ShootAssistCommand extends CommandBase {
         return Math.min(1.0, limitOpenTimer.seconds() / leadTime);
     }
 
-    private double updateShootRequest() {
+    private double updateShootRequest(boolean jamRequested) {
+        if (jamRequested) {
+            shooter.idle();
+            autoAim.reset();
+            resetFiringSequence(FiringState.WAITING);
+            return 0.0;
+        }
+
         boolean validShootingTarget = vision.hasValidShootingTarget();
         double autoAimTurn = autoAim.calculateTurnPower(
                 validShootingTarget,
@@ -135,13 +181,19 @@ public class ShootAssistCommand extends CommandBase {
             if (!targetAccepted) {
                 shooter.idle();
             }
+        } else {
+            shooter.idle();
         }
 
         canPrepareToFire = active
                 && validShootingTarget
                 && vision.getTargetHiveState() == HiveState.HIGH
                 && shooter.isReady()
-                && autoAim.isLocked();
+                && shooter.isPitchReady()
+                && autoAim.isLocked()
+                && !manualTranslation
+                && positionHold.isLocked()
+                && transit.areLimitPositionsCalibrated();
         updateFiringSequence(canPrepareToFire);
 
         return validShootingTarget ? autoAimTurn : 0.0;
@@ -173,22 +225,16 @@ public class ShootAssistCommand extends CommandBase {
             firingState = FiringState.FEEDING;
         }
 
-        boolean feeding = firingState == FiringState.FEEDING;
-        shooter.setFeeding(feeding);
-        if (feeding) {
-            intake.active();
-        } else {
-            intake.idle();
-        }
     }
 
     private void resetFiringSequence(FiringState resetState) {
+        if (transit.getState() == Transit.TransitState.OPEN) {
+            intake.clearBallCount();
+        }
         canPrepareToFire = false;
         firingState = resetState;
         limitOpenTimer.reset();
-        shooter.setFeeding(false);
         transit.close();
-        intake.idle();
     }
 
     private double applyDeadband(double input) {

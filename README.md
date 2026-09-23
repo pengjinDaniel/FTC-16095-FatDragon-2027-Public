@@ -14,20 +14,19 @@ Official code repository for FTC Team 16095 FatDragon during the 2026–2027 BIO
 - `subsystems/` — robot subsystems
 - `commands/` — command-based robot actions
 - `tests/` — test OpModes
-- `utils/` — utility classes
 
 ## Current Progress
 
 - [x] Basic mecanum drivetrain
 - [x] Command-based drivetrain control
-- [ ] Pinpoint localization
-- [ ] Field-centric drive
-- [ ] Pedro Pathing
-- [ ] Autonomous routines
-- [ ] Vision
+- [x] Pinpoint integration (offsets, pod directions, and position hold need robot tuning)
+- [x] Limelight HIGH CELL targeting (pipeline and geometry need robot tuning)
+- [x] Intake, transit, shooter, and flower controls (sensor and mechanism tuning needed)
 
 ## Notes
 
 This repository is under active development for the 2026–2027 FTC season.
 
-Some constants and configurations may initially be inherited from the 2025–2026 robot and will be retuned for the new robot.
+Shooter velocity control and automatic firing remain disabled until the 2027-specific
+PIDF, readiness thresholds, distance tables, vision geometry, position hold, and servo
+positions are measured and calibrated. Autonomous routines are not implemented yet.
