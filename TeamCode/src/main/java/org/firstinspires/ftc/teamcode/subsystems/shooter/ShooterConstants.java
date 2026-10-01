@@ -9,7 +9,7 @@ public class ShooterConstants {
     public static DcMotorSimple.Direction leftShooterDirection =
             DcMotorSimple.Direction.FORWARD;
     public static DcMotorSimple.Direction rightShooterDirection =
-            DcMotorSimple.Direction.FORWARD;
+            DcMotorSimple.Direction.REVERSE;
 
     public static double idlePower = 0.0;
     public static double maxPower = 1.0;

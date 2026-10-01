@@ -7,6 +7,7 @@ import com.qualcomm.hardware.limelightvision.Limelight3A;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 
 import org.firstinspires.ftc.robotcore.external.navigation.Pose3D;
+import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -57,7 +58,9 @@ public class Vision extends SubsystemBase {
         }
 
         LLResult result = limelight.getLatestResult();
-        if (result == null || !result.isValid()) {
+        if (result == null || !result.isValid()
+                || result.getStaleness() < 0
+                || result.getStaleness() > VisionConstants.maxResultAgeMs) {
             return;
         }
 
@@ -107,7 +110,10 @@ public class Vision extends SubsystemBase {
                     tagId,
                     tagPoseRobotSpace,
                     targetArea,
-                    position.get().upInches
+                    position.get().upInches,
+                    tagPoseRobotSpace.getOrientation() == null
+                            ? Double.NaN
+                            : tagPoseRobotSpace.getOrientation().getRoll(AngleUnit.DEGREES)
             ));
         }
 

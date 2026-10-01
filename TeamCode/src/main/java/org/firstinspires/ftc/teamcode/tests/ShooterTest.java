@@ -10,7 +10,7 @@ import org.firstinspires.ftc.teamcode.subsystems.shooter.ShooterConstants;
 
 @TeleOp(name = "Shooter Test", group = "TeleOp")
 public class ShooterTest extends OpMode {
-    private static final double maxTestPower = 0.5;
+    private static final double maxTestPower = 0.8;
     private static final double triggerDeadband = 0.05;
 
     private DcMotorEx leftShooterMotor;

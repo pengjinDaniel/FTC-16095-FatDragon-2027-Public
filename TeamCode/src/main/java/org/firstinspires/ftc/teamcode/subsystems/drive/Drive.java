@@ -8,6 +8,8 @@ import com.qualcomm.robotcore.hardware.HardwareMap;
 
 import org.firstinspires.ftc.robotcore.external.navigation.Pose2D;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
+import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
+import org.firstinspires.ftc.robotcore.external.navigation.UnnormalizedAngleUnit;
 
 public class Drive extends SubsystemBase {
     public final DcMotorEx leftFrontMotor;
@@ -59,6 +61,24 @@ public class Drive extends SubsystemBase {
         return pinpoint.getPosition();
     }
 
+    public void setPose(Pose2D pose) {
+        if (pose == null
+                || !Double.isFinite(pose.getX(DistanceUnit.INCH))
+                || !Double.isFinite(pose.getY(DistanceUnit.INCH))
+                || !Double.isFinite(pose.getHeading(AngleUnit.RADIANS))) {
+            throw new IllegalArgumentException("Pose must be finite");
+        }
+        pinpoint.setPosition(pose);
+    }
+
+    public void setXYInches(double xInches, double yInches) {
+        if (!Double.isFinite(xInches) || !Double.isFinite(yInches)) {
+            throw new IllegalArgumentException("Pose coordinates must be finite");
+        }
+        pinpoint.setPosX(xInches, DistanceUnit.INCH);
+        pinpoint.setPosY(yInches, DistanceUnit.INCH);
+    }
+
     public GoBildaPinpointDriver.DeviceStatus getPinpointStatus() {
         return pinpoint.getDeviceStatus();
     }
@@ -68,6 +88,10 @@ public class Drive extends SubsystemBase {
                 pinpoint.getVelX(DistanceUnit.INCH),
                 pinpoint.getVelY(DistanceUnit.INCH)
         );
+    }
+
+    public double getHeadingSpeedDegreesPerSecond() {
+        return Math.abs(pinpoint.getHeadingVelocity(UnnormalizedAngleUnit.DEGREES));
     }
 
     public void stop() {

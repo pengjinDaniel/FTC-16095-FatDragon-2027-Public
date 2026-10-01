@@ -74,24 +74,41 @@ final class CellTargetEstimator {
                 VisionConstants.minimumPoseObservationsForHiveState
         );
         double tolerance = VisionConstants.tagHeightToleranceInches;
+        double rollTolerance = VisionConstants.tagRollToleranceDegrees;
         if (observations.size() < minimumObservations
                 || !Double.isFinite(tolerance)
-                || tolerance < 0.0) {
+                || tolerance < 0.0
+                || !Double.isFinite(rollTolerance)
+                || rollTolerance < 0.0
+                || rollTolerance >= 180.0) {
             return HiveState.UNKNOWN;
         }
 
+        int classifiedObservations = 0;
         for (TagObservation observation : observations) {
-            double highHeight = getTagHeightReference(
+            double highHeight = getTagReference(
                     VisionConstants.highTagHeightsInches,
                     observation.tagId
             );
-            if (!Double.isFinite(highHeight)
-                    || Math.abs(observation.tagHeightInches - highHeight) > tolerance) {
+            double highRoll = getTagReference(
+                    VisionConstants.highTagRollDegrees,
+                    observation.tagId
+            );
+            if (!Double.isFinite(highHeight) || !Double.isFinite(highRoll)) {
+                continue;
+            }
+            if (!Double.isFinite(observation.tagRollDegrees)
+                    || Math.abs(observation.tagHeightInches - highHeight) > tolerance
+                    || Math.abs(Math.IEEEremainder(
+                            observation.tagRollDegrees - highRoll, 360.0
+                    )) > rollTolerance) {
                 return HiveState.UNKNOWN;
             }
+            classifiedObservations++;
         }
 
-        return HiveState.HIGH;
+        return classifiedObservations >= minimumObservations
+                ? HiveState.HIGH : HiveState.UNKNOWN;
     }
 
     private Optional<Pose3D> estimateCellCenterPose(
@@ -182,7 +199,7 @@ final class CellTargetEstimator {
         );
     }
 
-    private static double getTagHeightReference(double[] references, int tagId) {
+    private static double getTagReference(double[] references, int tagId) {
         int index = tagId - FIRST_BIOBUZZ_TAG_ID;
         if (references == null || index < 0 || index >= references.length) {
             return Double.NaN;
@@ -202,17 +219,20 @@ final class CellTargetEstimator {
         final Pose3D tagPoseRobotSpace;
         final double targetArea;
         final double tagHeightInches;
+        final double tagRollDegrees;
 
         TagObservation(
                 int tagId,
                 Pose3D tagPoseRobotSpace,
                 double targetArea,
-                double tagHeightInches
+                double tagHeightInches,
+                double tagRollDegrees
         ) {
             this.tagId = tagId;
             this.tagPoseRobotSpace = tagPoseRobotSpace;
             this.targetArea = targetArea;
             this.tagHeightInches = tagHeightInches;
+            this.tagRollDegrees = tagRollDegrees;
         }
     }
 
