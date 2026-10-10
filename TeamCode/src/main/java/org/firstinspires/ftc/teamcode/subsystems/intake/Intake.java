@@ -134,7 +134,6 @@ public class Intake extends SubsystemBase {
         } else if (ballCount >= IntakeConstants.maxBallCount) {
             setPower(IntakeConstants.fullReversePower);
         } else if (!Double.isFinite(distanceCm) || distanceCm < 0.0) {
-            // A failed distance reading must not let the intake exceed the ball limit.
             setPower(0.0);
         } else if (intakeRequested) {
             setPower(IntakeConstants.activePower);

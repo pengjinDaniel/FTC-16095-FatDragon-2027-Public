@@ -161,6 +161,7 @@ public class ShootAssistCommand extends CommandBase {
     }
 
     private double updateShootRequest(boolean jamRequested) {
+        vision.updateFieldTarget(drive, !jamRequested);
         if (jamRequested) {
             shooter.idle();
             autoAim.reset();
@@ -168,9 +169,10 @@ public class ShootAssistCommand extends CommandBase {
             return 0.0;
         }
 
+        boolean validAimingTarget = vision.hasValidAimingTarget();
         boolean validShootingTarget = vision.hasValidShootingTarget();
         double autoAimTurn = autoAim.calculateTurnPower(
-                validShootingTarget,
+                validAimingTarget,
                 vision.getYawErrorDegrees()
         );
 
@@ -191,12 +193,10 @@ public class ShootAssistCommand extends CommandBase {
                 && shooter.isReady()
                 && shooter.isPitchReady()
                 && autoAim.isLocked()
-                && !manualTranslation
-                && positionHold.isLocked()
                 && transit.areLimitPositionsCalibrated();
         updateFiringSequence(canPrepareToFire);
 
-        return validShootingTarget ? autoAimTurn : 0.0;
+        return validAimingTarget ? autoAimTurn : 0.0;
     }
 
     private void updateFiringSequence(boolean readyToOpenLimit) {

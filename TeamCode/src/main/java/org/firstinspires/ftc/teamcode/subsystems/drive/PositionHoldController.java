@@ -91,7 +91,6 @@ public class PositionHoldController {
             fieldYPower *= maxPower / magnitude;
         }
 
-        // Pinpoint X is forward and Y is left at zero heading; drive strafe is right.
         forwardPower = fieldXPower * Math.cos(heading) + fieldYPower * Math.sin(heading);
         strafePower = fieldXPower * Math.sin(heading) - fieldYPower * Math.cos(heading);
     }

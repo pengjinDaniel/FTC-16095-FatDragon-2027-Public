@@ -1,23 +1,3 @@
-/*
- * Copyright (c) 2024 DigitalChickenLabs
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in all
- * copies or substantial portions of the Software.
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
- */
 
 package org.firstinspires.ftc.robotcontroller.external.samples;
 
@@ -32,25 +12,6 @@ import org.firstinspires.ftc.robotcore.external.Telemetry;
 import java.util.ArrayList;
 import java.util.Stack;
 
-/*
- * This OpMode illustrates how to use the DigitalChickenLabs OctoQuad Quadrature Encoder & Pulse Width Interface Module.
- *
- *   The OctoQuad has 8 input channels that can used to read either Relative Quadrature Encoders or Pulse-Width Absolute Encoder inputs.
- *   Relative Quadrature encoders are found on most FTC motors, and some stand-alone position sensors like the REV Thru-Bore encoder.
- *   Pulse-Width encoders are less common. The REV Thru-Bore encoder can provide its absolute position via a variable pulse width,
- *   as can several sonar rangefinders such as the MaxBotix MB1000 series.
- *
- * This OpMode assumes that the OctoQuad is attached to an I2C interface named "octoquad" in the robot configuration.
- *
- * Remove or comment out the @Disabled line to add this OpMode to the Driver Station OpMode list
- *
- * Select, Init and run the "OctoQuad Configuration Tool" OpMode
- * Read the blue User-Interface tips at the top of the telemetry screen.
- * Use the UI buttons to navigate the menu and make any desired changes to the OctoQuad configuration.
- * Use the Program Settings To FLASH option to make any changes permanent.
- *
- * See the sensor's product page: https://www.tindie.com/products/digitalchickenlabs/octoquad-8ch-quadrature-pulse-width-decoder/
- */
 @TeleOp(name = "OctoQuad Configuration Tool", group="OctoQuad")
 @Disabled
 public class UtilityOctoQuadConfigMenu extends LinearOpMode
@@ -115,7 +76,7 @@ public class UtilityOctoQuadConfigMenu extends LinearOpMode
         optionExit = new TelemetryMenu.StaticClickableOption("Exit configuration menu")
         {
             @Override
-            void onClick() // called on OpMode thread
+            void onClick()
             {
                 requestOpModeStop();
             }
@@ -125,7 +86,6 @@ public class UtilityOctoQuadConfigMenu extends LinearOpMode
         optionChannelBankConfig = new TelemetryMenu.EnumOption("Channel Bank Modes", OctoQuad.ChannelBankConfig.values(), octoquad.getChannelBankConfig());
 
         menuHwInfo.addChild(new TelemetryMenu.StaticItem("Board Firmware: v" + octoquad.getFirmwareVersion()));
-        //menuHwInfo.addChild(new TelemetryMenu.StaticItem("Board unique ID: FIXME"));
 
         for(int i = 0; i < OctoQuad.NUM_ENCODERS; i++)
         {
@@ -281,26 +241,6 @@ public class UtilityOctoQuadConfigMenu extends LinearOpMode
         octoquad.setChannelBankConfig((OctoQuad.ChannelBankConfig) optionChannelBankConfig.getValue());
     }
 
-    /*
-     * Copyright (c) 2023 OpenFTC Team
-     *
-     * Permission is hereby granted, free of charge, to any person obtaining a copy
-     * of this software and associated documentation files (the "Software"), to deal
-     * in the Software without restriction, including without limitation the rights
-     * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-     * copies of the Software, and to permit persons to whom the Software is
-     * furnished to do so, subject to the following conditions:
-     *
-     * The above copyright notice and this permission notice shall be included in all
-     * copies or substantial portions of the Software.
-     * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-     * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-     * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-     * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-     * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-     * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-     * SOFTWARE.
-     */
 
     public static class TelemetryMenu
     {
@@ -319,11 +259,6 @@ public class UtilityOctoQuadConfigMenu extends LinearOpMode
 
         private final Telemetry telemetry;
 
-        /**
-         * TelemetryMenu constructor
-         * @param telemetry pass in 'telemetry' from your OpMode
-         * @param root the root menu element
-         */
         public TelemetryMenu(Telemetry telemetry, MenuElement root)
         {
             this.root = root;
@@ -334,15 +269,8 @@ public class UtilityOctoQuadConfigMenu extends LinearOpMode
             telemetry.setMsTransmissionInterval(50);
         }
 
-        /**
-         * Call this from inside your loop to put the current menu state into
-         * telemetry, and process gamepad inputs for navigating the menu
-         * @param gamepad the gamepad you want to use to navigate the menu
-         */
         public void loop(Gamepad gamepad)
         {
-            // Capture current state of the gamepad buttons we care about;
-            // We can only look once or we risk a race condition
             boolean dpadUp = gamepad.dpad_up;
             boolean dpadDn = gamepad.dpad_down;
             boolean dpadRight = gamepad.dpad_right;
@@ -350,36 +278,30 @@ public class UtilityOctoQuadConfigMenu extends LinearOpMode
             boolean x = gamepad.x;
             boolean lb = gamepad.left_bumper;
 
-            // Figure out who our children our at this level
-            // and figure out which item is currently highlighted
-            // with the selection pointer
             ArrayList<Element> children = currentLevel.children();
             Element currentSelection = children.get(selectedIdx);
 
-            // Left and right are inputs to the selected item (if it's an Option)
             if (currentSelection instanceof OptionElement)
             {
-                if (dpadRight && !dpadRightPrev) // rising edge
+                if (dpadRight && !dpadRightPrev)
                 {
                     ((OptionElement) currentSelection).onRightInput();
                 }
-                else if (dpadLeft && !dpadLeftPrev) // rising edge
+                else if (dpadLeft && !dpadLeftPrev)
                 {
                     ((OptionElement) currentSelection).onLeftInput();
                 }
             }
 
-            // Up and down navigate the current selection pointer
-            if (dpadUp && !dpadUpPrev) // rising edge
+            if (dpadUp && !dpadUpPrev)
             {
-                selectedIdx--; // Move selection pointer up
+                selectedIdx--;
             }
-            else if (dpadDn && !dpadDnPrev) // rising edge
+            else if (dpadDn && !dpadDnPrev)
             {
-                selectedIdx++; // Move selection pointer down
+                selectedIdx++;
             }
 
-            // Make selected index sane (don't let it go out of bounds) :eyes:
             if (selectedIdx >= children.size())
             {
                 selectedIdx = children.size()-1;
@@ -389,60 +311,41 @@ public class UtilityOctoQuadConfigMenu extends LinearOpMode
                 selectedIdx = 0;
             }
 
-            // Select: either enter submenu or input to option
-            else if (x && !xPrev) // rising edge
+            else if (x && !xPrev)
             {
-                // Select up element
                 if (currentSelection instanceof SpecialUpElement)
                 {
-                    // We can only go up if we're not at the root level
                     if (currentLevel != root)
                     {
-                        // Restore selection pointer to where it was before
                         selectedIdx = selectedIdxStack.pop();
 
-                        // Change to the parent level
                         currentLevel = currentLevel.parent();
                     }
                 }
-                // Input to option
                 else if (currentSelection instanceof OptionElement)
                 {
                     ((OptionElement) currentSelection).onClick();
                 }
-                // Enter submenu
                 else if (currentSelection instanceof MenuElement)
                 {
-                    // Save our current selection pointer so we can restore it
-                    // later if the user navigates back up a level
                     selectedIdxStack.push(selectedIdx);
 
-                    // We have no idea what's in the submenu :monkey: so best to
-                    // just set the selection pointer to the first element
                     selectedIdx = 0;
 
-                    // Now the current level becomes the submenu that the selection
-                    // pointer was on
                     currentLevel = (MenuElement) currentSelection;
                 }
             }
 
-            // Go up a level
             else if (lb && !lbPrev)
             {
-                // We can only go up if we're not at the root level
                 if (currentLevel != root)
                 {
-                    // Restore selection pointer to where it was before
                     selectedIdx = selectedIdxStack.pop();
 
-                    // Change to the parent level
                     currentLevel = currentLevel.parent();
                 }
             }
 
-            // Save the current button states so that we can look for
-            // the rising edge the next time around the loop :)
             dpadUpPrev = dpadUp;
             dpadDnPrev = dpadDn;
             dpadRightPrev = dpadRight;
@@ -450,8 +353,6 @@ public class UtilityOctoQuadConfigMenu extends LinearOpMode
             xPrev = x;
             lbPrev = lb;
 
-            // Start building the text display.
-            // First, we add the static directions for gamepad operation
             StringBuilder builder = new StringBuilder();
             builder.append("<font color='#119af5' face=monospace>");
             builder.append("Navigate items.....dpad up/down\n")
@@ -461,48 +362,36 @@ public class UtilityOctoQuadConfigMenu extends LinearOpMode
             builder.append("</font>");
             builder.append("\n");
 
-            // Now actually add the menu options. We start by adding the name of the current menu level.
             builder.append("<font face=monospace>");
             builder.append("Current Menu: ").append(currentLevel.name).append("\n");
 
-            // Now we loop through all the child elements of this level and add them
             for (int i = 0; i < children.size(); i++)
             {
-                // If the selection pointer is at this index, put a green dot in the box :)
                 if (selectedIdx == i)
                 {
                     builder.append("[<font color=green face=monospace>•</font>] ");
                 }
-                // Otherwise, just put an empty box
                 else
                 {
                     builder.append("[ ] ");
                 }
 
-                // Figure out who the selection pointer is pointing at :eyes:
                 Element e = children.get(i);
 
-                // If it's pointing at a submenu, indicate that it's a submenu to the user
-                // by prefixing "> " to the name.
                 if (e instanceof MenuElement)
                 {
                     builder.append("> ");
                 }
 
-                // Finally, add the element's name
                 builder.append(e.getDisplayText());
 
-                // We musn't forget the newline
                 builder.append("\n");
             }
 
-            // Don't forget to close the font tag either
             builder.append("</font>");
 
-            // Build the string!!!! :nerd:
             String menu = builder.toString();
 
-            // Add it to telemetry
             telemetry.addLine(menu);
         }
 
@@ -511,36 +400,22 @@ public class UtilityOctoQuadConfigMenu extends LinearOpMode
             private String name;
             private ArrayList<Element> children = new ArrayList<>();
 
-            /**
-             * Create a new MenuElement; may either be the root menu, or a submenu (set isRoot accordingly)
-             * @param name the name for this menu
-             * @param isRoot whether this is a root menu, or a submenu
-             */
             public MenuElement(String name, boolean isRoot)
             {
                 this.name = name;
 
-                // If it's not the root menu, we add the up one level option as the first element
                 if (!isRoot)
                 {
                     children.add(new SpecialUpElement());
                 }
             }
 
-            /**
-             * Add a child element to this menu (may either be an Option or another menu)
-             * @param child the child element to add
-             */
             public void addChild(Element child)
             {
                 child.setParent(this);
                 children.add(child);
             }
 
-            /**
-             * Add multiple child elements to this menu (may either be option, or another menu)
-             * @param children the children to add
-             */
             public void addChildren(Element[] children)
             {
                 for (Element e : children)
@@ -564,19 +439,10 @@ public class UtilityOctoQuadConfigMenu extends LinearOpMode
 
         public static abstract class OptionElement extends Element
         {
-            /**
-             * Override this to get notified when the element is clicked
-             */
             void onClick() {}
 
-            /**
-             * Override this to get notified when the element gets a "left edit" input
-             */
             protected void onLeftInput() {}
 
-            /**
-             * Override this to get notified when the element gets a "right edit" input
-             */
             protected void onRightInput() {}
         }
 
@@ -623,7 +489,6 @@ public class UtilityOctoQuadConfigMenu extends LinearOpMode
             @Override
             public void onClick()
             {
-                //onRightInput();
             }
 
             @Override
@@ -678,7 +543,6 @@ public class UtilityOctoQuadConfigMenu extends LinearOpMode
             @Override
             public void onClick()
             {
-                //onRightInput();
             }
 
             @Override
@@ -755,9 +619,6 @@ public class UtilityOctoQuadConfigMenu extends LinearOpMode
             }
         }
 
-        /**
-         *
-         */
         public static class StaticItem extends OptionElement
         {
             private String name;

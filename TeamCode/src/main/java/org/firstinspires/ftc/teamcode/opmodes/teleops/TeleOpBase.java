@@ -66,16 +66,45 @@ public abstract class TeleOpBase extends CommandOpMode {
     @Override
     public void run() {
         super.run();
+        vision.updateFieldTarget(drive, !drive.isFieldPoseInitialized() || gamepad1.b);
 
         Pose2D pose = drive.getPose();
         telemetry.addData("Pinpoint X (in)", pose.getX(DistanceUnit.INCH));
         telemetry.addData("Pinpoint Y (in)", pose.getY(DistanceUnit.INCH));
         telemetry.addData("Pinpoint Heading (deg)", pose.getHeading(AngleUnit.DEGREES));
         telemetry.addData("Alliance", vision.getAlliance());
+        telemetry.addData("Target Status", vision.getTargetStatus());
+        telemetry.addData("Vision Pose Status", vision.getPoseStatus());
+        telemetry.addData("Pipeline expected/actual", "%d / %d",
+                vision.getExpectedPipelineIndex(), vision.getActualPipelineIndex());
+        telemetry.addData("MT1 Tag Count / Age (ms)", "%d / %d",
+                vision.getBotposeTagCount(), vision.getResultAgeMs());
+        telemetry.addData("Area-qualified Alliance Tags", vision.getUsableTagCount());
+        telemetry.addData("Raw MT1 Pose", vision.getRawRobotFieldPose()
+                .map(Object::toString).orElse("NONE"));
+        telemetry.addData("Corrected Vision Pose", vision.getCorrectedRobotFieldPose()
+                .map(Object::toString).orElse("NONE"));
+        telemetry.addData("HIVE Angle (deg)", vision.getHiveAngleDegrees());
+        telemetry.addData("Robot Level Error (deg)", vision.getRobotLevelErrorDegrees());
+        telemetry.addData("Field Pose Initialized", drive.isFieldPoseInitialized());
+        telemetry.addData("Vision Correction Applied", vision.wasCorrectionApplied());
+        telemetry.addData("Vision Raw / Solve / Accepted", "%b / %b / %b",
+                vision.isRawResultValid(), vision.isHiveSolveSuccessful(), vision.isCorrectedPoseAccepted());
+        telemetry.addData("Physical Frame Age (ms)", vision.getPhysicalFrameAgeMs());
+        telemetry.addData("HIVE phi roots / level errors", vision.getHiveCandidateDiagnostics());
+        telemetry.addData("Usable HIVE Roots", vision.getUsableHiveCandidateCount());
+        telemetry.addData("MT1 Avg Dist / Span (m)", "%.2f / %.2f",
+                vision.getAverageTagDistanceMeters(), vision.getTagSpanMeters());
+        telemetry.addData("MT1 Avg Area (%) / Stddev", "%.3f / %s",
+                vision.getAverageTagArea(), vision.getMt1StandardDeviationDiagnostics());
+        telemetry.addData("Vision Correction Status", drive.getVisionCorrectionStatus());
+        telemetry.addData("Vision Difference (in / deg)", "%.2f / %.2f",
+                drive.getVisionPositionDifferenceInches(), drive.getVisionHeadingDifferenceDegrees());
+        telemetry.addData("Rejected New Frames / Forced", "%d / %b",
+                drive.getRejectedVisionFrameCount(), drive.wasVisionCorrectionForced());
         telemetry.addData("Visible Tags", vision.getVisibleTagIds());
         telemetry.addData("Alliance Tag Visible", vision.hasVisibleAllianceTag());
         telemetry.addData("Tag Z (in)", vision.getVisibleTagHeightsInches());
-        telemetry.addData("Calibrated Tag Transforms", vision.getCalibratedTransformTagIds());
         telemetry.addData("Cluster States", vision.getObservedClusterStates());
         telemetry.addData(
                 "Selected Cluster",
@@ -83,6 +112,7 @@ public abstract class TeleOpBase extends CommandOpMode {
         );
         telemetry.addData("Selected Tag", vision.getSelectedTagId());
         telemetry.addData("Hive State", vision.getTargetHiveState());
+        telemetry.addData("Valid Aim Target", vision.hasValidAimingTarget());
         telemetry.addData("Valid HIGH Target", vision.hasValidShootingTarget());
         telemetry.addData(
                 "Representative Tag Pose (robot)",
@@ -90,13 +120,9 @@ public abstract class TeleOpBase extends CommandOpMode {
                         .map(Object::toString)
                         .orElse("NONE")
         );
-        telemetry.addData(
-                "CELL Center Pose (robot)",
-                vision.getTargetCellPoseRobotSpace()
-                        .map(Object::toString)
-                        .orElse("NONE")
-        );
-        telemetry.addData("3D Range (in)", vision.getTargetRange3DInches());
+        telemetry.addData("CELL Target Field XY (in)", "%.2f, %.2f",
+                vision.getTargetXInches(), vision.getTargetYInches());
+        telemetry.addData("Desired Heading (deg)", vision.getDesiredHeadingDegrees());
         telemetry.addData(
                 "Horizontal Distance (in)",
                 vision.getTargetHorizontalDistanceInches()

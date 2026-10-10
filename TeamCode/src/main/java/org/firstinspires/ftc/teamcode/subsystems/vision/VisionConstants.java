@@ -2,30 +2,26 @@ package org.firstinspires.ftc.teamcode.subsystems.vision;
 
 public class VisionConstants {
     public static String limelightName = "limelight";
-    public static int pipelineIndex = 0;
+    public static int bluePipelineIndex = 0;
+    public static int redPipelineIndex = 1;
     public static int pollRateHz = 50;
     public static long maxResultAgeMs = 200;
+    // Minimum individual AprilTag area as a percentage of the image (0-100).
     public static double minimumTargetArea = 0.01;
+    public static int minimumBotposeTagCount = 2;
 
-    // Index 0 corresponds to tag 30 and index 15 corresponds to tag 45.
-    // Populate with measured robot-space tag-center Z values for the HIGH configuration.
-    // An empty array or non-finite tolerance intentionally classifies every CELL as UNKNOWN.
-    public static double[] highTagHeightsInches = new double[0];
-    public static double tagHeightToleranceInches = 2;
-    // Calibrate from Limelight robot-space Tag orientation, not SDK ftcPose.roll.
-    // An empty array or non-finite tolerance keeps HIGH classification disabled.
-    public static double[] highTagRollDegrees = new double[0];
-    public static double tagRollToleranceDegrees = Double.NaN;
-    public static int minimumPoseObservationsForHiveState = 1;
+    // 19725 flat-HIVE map: field-center origin, inches, +X toward the audience.
+    // Target order follows CellCluster.getTuningIndex(). User selected these references.
+    public static double[][] cellTargetFieldXYInches = {
+            {-17.7, -12.75}, {17.7, -12.75},
+            {17.7, 12.75}, {-17.7, 12.75}
+    };
+    public static double hivePivotHeightInches = 43.95;
+    public static double maximumHiveTiltDegrees = 35.0;
+    public static double robotLevelToleranceDegrees = 10.0;
+    public static double highHiveTiltThresholdDegrees = 23.0;
 
-    // No tag-to-CELL transform is assumed. Populate this map only from measured or official
-    // geometry; an empty map intentionally disables CELL-center targeting and firing.
-    public static TagToCellTransformMap tagToCellTransforms = TagToCellTransformMap.empty();
-
-    // Order: red opposite audience, red audience, blue audience, blue opposite audience.
-    public static double[] clusterYawOffsetsDegrees = {0.0, 0.0, 0.0, 0.0};
-    public static double[] clusterRange3DOffsetsInches = {0.0, 0.0, 0.0, 0.0};
-    public static double[] clusterHorizontalDistanceOffsetsInches = {0.0, 0.0, 0.0, 0.0};
+    public static double shooterYawDegrees = 180.0;
 
     private VisionConstants() {
     }

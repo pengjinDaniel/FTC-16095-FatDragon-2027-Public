@@ -20,7 +20,6 @@ public class ShooterConstants {
     public static double pitchSettleTimeSeconds = 0.2;
     public static double pitchChangeResetThreshold = 0.005;
 
-    // Set measured gains and readiness thresholds before enabling velocity control.
     public static boolean velocityControlCalibrated = false;
     public static double kP = 0.0;
     public static double kI = 0.0;
@@ -32,7 +31,6 @@ public class ShooterConstants {
     public static double readyStableTimeSeconds = Double.NaN;
     public static double targetChangeResetThreshold = Double.NaN;
 
-    // Populate all three arrays with matching, ascending, measured 2027 values before firing.
     public static double[] distancePointsInches = new double[0];
     public static double[] velocityPointsTicksPerSecond = new double[0];
     public static double[] pitchPoints = new double[0];

@@ -8,7 +8,6 @@ public class TransitConstants {
     public static double forwardPower = 0.8;
     public static double reversePower = -0.8;
     public static String limitServoName = "limitServo";
-    // Populate measured gate positions before enabling shooting.
     public static boolean limitPositionsCalibrated = false;
     public static double limitClosed = Double.NaN;
     public static double limitOpen = Double.NaN;

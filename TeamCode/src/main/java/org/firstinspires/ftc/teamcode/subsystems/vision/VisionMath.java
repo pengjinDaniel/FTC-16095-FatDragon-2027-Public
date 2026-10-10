@@ -1,251 +1,145 @@
 package org.firstinspires.ftc.teamcode.subsystems.vision;
 
-import org.firstinspires.ftc.robotcore.external.matrices.OpenGLMatrix;
-import org.firstinspires.ftc.robotcore.external.matrices.VectorF;
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
-import org.firstinspires.ftc.robotcore.external.navigation.AxesOrder;
-import org.firstinspires.ftc.robotcore.external.navigation.AxesReference;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
-import org.firstinspires.ftc.robotcore.external.navigation.Orientation;
+import org.firstinspires.ftc.robotcore.external.navigation.Pose2D;
 import org.firstinspires.ftc.robotcore.external.navigation.Pose3D;
 import org.firstinspires.ftc.robotcore.external.navigation.Position;
-import org.firstinspires.ftc.robotcore.external.navigation.Quaternion;
-import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles;
 
-import java.util.List;
 import java.util.Optional;
 
 final class VisionMath {
-    private static final double MINIMUM_QUATERNION_MAGNITUDE = 1e-9;
-
     private VisionMath() {
     }
 
-    static Optional<Pose3D> compose(Pose3D first, Pose3D second) {
-        Optional<OpenGLMatrix> firstMatrix = toMatrix(first);
-        Optional<OpenGLMatrix> secondMatrix = toMatrix(second);
-        if (!firstMatrix.isPresent() || !secondMatrix.isPresent()) {
-            return Optional.empty();
-        }
-
-        return fromMatrix(firstMatrix.get().multiplied(secondMatrix.get()));
-    }
-
-    static Optional<Pose3D> weightedAveragePoses(
-            List<Pose3D> poses,
-            List<Double> weights
+    // The fmap stores a flat HIVE; phi is the rotation from the true robot pose to MT1.
+    static HiveSolveResult solveHiveFlatPose(
+            Pose3D rawPose, double pivotHeightInches,
+            double maxTiltDegrees, double levelToleranceDegrees
     ) {
-        if (poses == null
-                || weights == null
-                || poses.isEmpty()
-                || poses.size() != weights.size()) {
-            return Optional.empty();
+        HiveSolveResult result = new HiveSolveResult();
+        if (rawPose == null || rawPose.getPosition() == null
+                || rawPose.getPosition().unit == null || rawPose.getOrientation() == null) {
+            result.status = "Missing MT1 3D pose";
+            return result;
         }
-
-        double totalWeight = 0.0;
-        double weightedX = 0.0;
-        double weightedY = 0.0;
-        double weightedZ = 0.0;
-        double weightedQw = 0.0;
-        double weightedQx = 0.0;
-        double weightedQy = 0.0;
-        double weightedQz = 0.0;
-        Quaternion referenceQuaternion = null;
-
-        for (int i = 0; i < poses.size(); i++) {
-            double weight = weights.get(i);
-            Optional<RobotSpacePosition> position = getRobotSpacePositionInches(poses.get(i));
-            Optional<OpenGLMatrix> poseMatrix = toMatrix(poses.get(i));
-            if (!Double.isFinite(weight)
-                    || weight <= 0.0
-                    || !position.isPresent()
-                    || !poseMatrix.isPresent()) {
+        if (!Double.isFinite(pivotHeightInches) || pivotHeightInches <= 0.0
+                || !Double.isFinite(maxTiltDegrees) || maxTiltDegrees <= 0.0
+                || maxTiltDegrees >= 90.0 || !Double.isFinite(levelToleranceDegrees)
+                || levelToleranceDegrees < 0.0 || levelToleranceDegrees >= 90.0) {
+            result.status = "Invalid HIVE correction parameters";
+            return result;
+        }
+        Position position = rawPose.getPosition().toUnit(DistanceUnit.INCH);
+        double yaw = rawPose.getOrientation().getYaw(AngleUnit.RADIANS);
+        double pitch = rawPose.getOrientation().getPitch(AngleUnit.RADIANS);
+        double roll = rawPose.getOrientation().getRoll(AngleUnit.RADIANS);
+        if (!Double.isFinite(position.x) || !Double.isFinite(position.y)
+                || !Double.isFinite(position.z) || !Double.isFinite(yaw)
+                || !Double.isFinite(pitch) || !Double.isFinite(roll)) {
+            result.status = "Non-finite MT1 3D pose";
+            return result;
+        }
+        double radius = Math.hypot(position.x, position.z - pivotHeightInches);
+        if (radius < pivotHeightInches - 1e-9) {
+            result.status = "No real HIVE tilt solution";
+            return result;
+        }
+        double alpha = Math.asin(Math.max(-1.0, -pivotHeightInches / radius));
+        double base = Math.atan2(position.z - pivotHeightInches, position.x);
+        double[] roots = {alpha - base, Math.PI - alpha - base};
+        double r00 = Math.cos(yaw) * Math.cos(pitch);
+        double r10 = Math.sin(yaw) * Math.cos(pitch);
+        double r20 = -Math.sin(pitch);
+        double r02 = Math.cos(yaw) * Math.sin(pitch) * Math.cos(roll)
+                + Math.sin(yaw) * Math.sin(roll);
+        double r22 = Math.cos(pitch) * Math.cos(roll);
+        int candidatesWithinTilt = 0;
+        for (int i = 0; i < roots.length; i++) {
+            double phi = Math.atan2(Math.sin(roots[i]), Math.cos(roots[i]));
+            result.candidatePhiDegrees[i] = Math.toDegrees(phi);
+            double cos = Math.cos(phi);
+            double sin = Math.sin(phi);
+            // The full robot-up vector checks both pitch and roll, including +/-90 yaw.
+            double upZ = sin * r02 + cos * r22;
+            double levelError = Math.toDegrees(Math.acos(Math.max(-1.0, Math.min(1.0, upZ))));
+            result.candidateLevelErrorsDegrees[i] = levelError;
+            if (Math.abs(Math.toDegrees(phi)) > maxTiltDegrees + 1e-9) {
                 continue;
             }
-
-            Quaternion quaternion = Quaternion.fromMatrix(poseMatrix.get(), 0);
-            double magnitude = quaternion.magnitude();
-            if (!Double.isFinite(magnitude) || magnitude <= MINIMUM_QUATERNION_MAGNITUDE) {
+            candidatesWithinTilt++;
+            if (levelError > levelToleranceDegrees) {
                 continue;
             }
-            quaternion = quaternion.normalized();
-
-            if (referenceQuaternion == null) {
-                referenceQuaternion = quaternion;
+            double x = position.x * cos - position.z * sin + pivotHeightInches * sin;
+            double heading = Math.atan2(r10, cos * r00 - sin * r20);
+            if (!Double.isFinite(x) || !Double.isFinite(heading)) {
+                continue;
             }
-            double sign = quaternionDot(referenceQuaternion, quaternion) < 0.0 ? -1.0 : 1.0;
-
-            RobotSpacePosition robotSpacePosition = position.get();
-            totalWeight += weight;
-            weightedX += robotSpacePosition.forwardInches * weight;
-            weightedY += robotSpacePosition.lateralInches * weight;
-            weightedZ += robotSpacePosition.upInches * weight;
-            weightedQw += sign * quaternion.w * weight;
-            weightedQx += sign * quaternion.x * weight;
-            weightedQy += sign * quaternion.y * weight;
-            weightedQz += sign * quaternion.z * weight;
+            result.usableCandidateCount++;
+            HiveCorrection correction = new HiveCorrection(
+                    new Pose2D(DistanceUnit.INCH, x, position.y, AngleUnit.RADIANS, heading),
+                    -Math.toDegrees(phi), levelError
+            );
+            if (result.correction == null || levelError < result.correction.levelErrorDegrees) {
+                result.correction = correction;
+            }
         }
-
-        if (!Double.isFinite(totalWeight) || totalWeight <= 0.0) {
-            return Optional.empty();
-        }
-
-        double quaternionMagnitude = Math.sqrt(
-                weightedQw * weightedQw
-                        + weightedQx * weightedQx
-                        + weightedQy * weightedQy
-                        + weightedQz * weightedQz
-        );
-        if (!Double.isFinite(quaternionMagnitude)
-                || quaternionMagnitude <= MINIMUM_QUATERNION_MAGNITUDE) {
-            return Optional.empty();
-        }
-
-        Quaternion averageQuaternion = new Quaternion(
-                (float) (weightedQw / quaternionMagnitude),
-                (float) (weightedQx / quaternionMagnitude),
-                (float) (weightedQy / quaternionMagnitude),
-                (float) (weightedQz / quaternionMagnitude),
-                0
-        );
-        Orientation orientation = Orientation.getOrientation(
-                averageQuaternion.toMatrix(),
-                AxesReference.INTRINSIC,
-                AxesOrder.ZXY,
-                AngleUnit.DEGREES
-        );
-
-        return Optional.of(new Pose3D(
-                new Position(
-                        DistanceUnit.INCH,
-                        weightedX / totalWeight,
-                        weightedY / totalWeight,
-                        weightedZ / totalWeight,
-                        0
-                ),
-                new YawPitchRollAngles(
-                        AngleUnit.DEGREES,
-                        orientation.firstAngle,
-                        orientation.secondAngle,
-                        orientation.thirdAngle,
-                        0
-                )
-        ));
+        result.status = result.correction != null ? "Corrected MT1 field pose ready"
+                : candidatesWithinTilt == 0 ? "HIVE tilt exceeds limit" : "Robot level check failed";
+        return result;
     }
 
-    static Optional<RobotSpacePosition> getRobotSpacePositionInches(Pose3D pose) {
+    static final class HiveSolveResult {
+        final double[] candidatePhiDegrees = {Double.NaN, Double.NaN};
+        final double[] candidateLevelErrorsDegrees = {Double.NaN, Double.NaN};
+        int usableCandidateCount;
+        HiveCorrection correction;
+        String status;
+    }
+
+    static double coordinateYawErrorDegrees(
+            Pose2D robotPose, double targetXInches, double targetYInches,
+            double shooterYawDegrees
+    ) {
+        if (robotPose == null || !Double.isFinite(targetXInches)
+                || !Double.isFinite(targetYInches) || !Double.isFinite(shooterYawDegrees)) {
+            return Double.NaN;
+        }
+        double dx = targetXInches - robotPose.getX(DistanceUnit.INCH);
+        double dy = targetYInches - robotPose.getY(DistanceUnit.INCH);
+        double heading = robotPose.getHeading(AngleUnit.RADIANS);
+        if (!Double.isFinite(dx) || !Double.isFinite(dy)
+                || !Double.isFinite(heading) || Math.hypot(dx, dy) <= 1e-6) {
+            return Double.NaN;
+        }
+        double error = Math.atan2(dy, dx) - Math.toRadians(shooterYawDegrees) - heading;
+        return Math.toDegrees(Math.atan2(Math.sin(error), Math.cos(error)));
+    }
+
+    static final class HiveCorrection {
+        final Pose2D robotPose;
+        final double hiveAngleDegrees;
+        final double levelErrorDegrees;
+
+        HiveCorrection(Pose2D robotPose, double hiveAngleDegrees, double levelErrorDegrees) {
+            this.robotPose = robotPose;
+            this.hiveAngleDegrees = hiveAngleDegrees;
+            this.levelErrorDegrees = levelErrorDegrees;
+        }
+    }
+
+    static Optional<Position> getRobotSpacePositionInches(Pose3D pose) {
         if (pose == null || pose.getPosition() == null || pose.getPosition().unit == null) {
             return Optional.empty();
         }
 
-        // Limelight robot space is target-relative: X forward, Y lateral, and Z up.
-        // Distance calculations are sign-independent, so they remain valid across the
-        // right-positive/left-positive Y convention change in Limelight OS 2027.
-        Position position = pose.getPosition();
-        double forward = DistanceUnit.INCH.fromUnit(position.unit, position.x);
-        double lateral = DistanceUnit.INCH.fromUnit(position.unit, position.y);
-        double up = DistanceUnit.INCH.fromUnit(position.unit, position.z);
-        if (!Double.isFinite(forward) || !Double.isFinite(lateral) || !Double.isFinite(up)) {
+        Position position = pose.getPosition().toUnit(DistanceUnit.INCH);
+        if (!Double.isFinite(position.x) || !Double.isFinite(position.y)
+                || !Double.isFinite(position.z)) {
             return Optional.empty();
         }
 
-        return Optional.of(new RobotSpacePosition(forward, lateral, up));
-    }
-
-    static boolean isValidPose(Pose3D pose) {
-        return toMatrix(pose).isPresent();
-    }
-
-    private static Optional<OpenGLMatrix> toMatrix(Pose3D pose) {
-        Optional<RobotSpacePosition> position = getRobotSpacePositionInches(pose);
-        if (!position.isPresent() || pose == null || pose.getOrientation() == null) {
-            return Optional.empty();
-        }
-
-        double yaw = pose.getOrientation().getYaw(AngleUnit.DEGREES);
-        double pitch = pose.getOrientation().getPitch(AngleUnit.DEGREES);
-        double roll = pose.getOrientation().getRoll(AngleUnit.DEGREES);
-        if (!Double.isFinite(yaw) || !Double.isFinite(pitch) || !Double.isFinite(roll)) {
-            return Optional.empty();
-        }
-
-        RobotSpacePosition robotSpacePosition = position.get();
-        OpenGLMatrix translation = OpenGLMatrix.translation(
-                (float) robotSpacePosition.forwardInches,
-                (float) robotSpacePosition.lateralInches,
-                (float) robotSpacePosition.upInches
-        );
-        OpenGLMatrix rotation = OpenGLMatrix.rotation(
-                AxesReference.INTRINSIC,
-                AxesOrder.ZXY,
-                AngleUnit.DEGREES,
-                (float) yaw,
-                (float) pitch,
-                (float) roll
-        );
-        return Optional.of(translation.multiplied(rotation));
-    }
-
-    private static Optional<Pose3D> fromMatrix(OpenGLMatrix matrix) {
-        if (matrix == null) {
-            return Optional.empty();
-        }
-
-        VectorF translation = matrix.getTranslation();
-        Orientation orientation = Orientation.getOrientation(
-                matrix,
-                AxesReference.INTRINSIC,
-                AxesOrder.ZXY,
-                AngleUnit.DEGREES
-        );
-        double x = translation.get(0);
-        double y = translation.get(1);
-        double z = translation.get(2);
-        if (!Double.isFinite(x)
-                || !Double.isFinite(y)
-                || !Double.isFinite(z)
-                || !Float.isFinite(orientation.firstAngle)
-                || !Float.isFinite(orientation.secondAngle)
-                || !Float.isFinite(orientation.thirdAngle)) {
-            return Optional.empty();
-        }
-
-        return Optional.of(new Pose3D(
-                new Position(DistanceUnit.INCH, x, y, z, 0),
-                new YawPitchRollAngles(
-                        AngleUnit.DEGREES,
-                        orientation.firstAngle,
-                        orientation.secondAngle,
-                        orientation.thirdAngle,
-                        0
-                )
-        ));
-    }
-
-    private static double quaternionDot(Quaternion first, Quaternion second) {
-        return first.w * second.w
-                + first.x * second.x
-                + first.y * second.y
-                + first.z * second.z;
-    }
-
-    static final class RobotSpacePosition {
-        final double forwardInches;
-        final double lateralInches;
-        final double upInches;
-        final double range3DInches;
-        final double horizontalDistanceInches;
-
-        RobotSpacePosition(double forwardInches, double lateralInches, double upInches) {
-            this.forwardInches = forwardInches;
-            this.lateralInches = lateralInches;
-            this.upInches = upInches;
-            horizontalDistanceInches = Math.sqrt(
-                    forwardInches * forwardInches + lateralInches * lateralInches
-            );
-            range3DInches = Math.sqrt(
-                    horizontalDistanceInches * horizontalDistanceInches + upInches * upInches
-            );
-        }
+        return Optional.of(position);
     }
 }

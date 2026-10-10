@@ -13,9 +13,12 @@ public class AutoAimController {
 
     private boolean locked;
     private long withinToleranceSinceNanos = -1;
+    private double rawTurnPower;
 
     public double calculateTurnPower(boolean hasValidTarget, double yawErrorDegrees) {
-        if (!hasValidTarget || !Double.isFinite(yawErrorDegrees)) {
+        double maxTurnPower = DriveConstants.autoAimMaxTurnPower;
+        if (!hasValidTarget || !Double.isFinite(yawErrorDegrees)
+                || !Double.isFinite(maxTurnPower) || maxTurnPower < 0.0) {
             reset();
             return 0.0;
         }
@@ -28,13 +31,23 @@ public class AutoAimController {
         );
         updateLockState(Math.abs(yawErrorDegrees));
 
-        double output = controller.calculate(0.0, yawErrorDegrees)
+        // A fixed setpoint lets FTCLib differentiate changes in the measurement.
+        double output = controller.calculate(-Math.toRadians(yawErrorDegrees), 0.0)
                 * DriveConstants.autoAimYawToTurnSign;
+        if (!Double.isFinite(output)) {
+            reset();
+            return 0.0;
+        }
+        rawTurnPower = output;
         return Range.clip(
                 output,
-                -DriveConstants.autoAimMaxTurnPower,
-                DriveConstants.autoAimMaxTurnPower
+                -Math.min(maxTurnPower, 1.0),
+                Math.min(maxTurnPower, 1.0)
         );
+    }
+
+    public double getRawTurnPower() {
+        return rawTurnPower;
     }
 
     public boolean isLocked() {
@@ -44,6 +57,7 @@ public class AutoAimController {
     public void reset() {
         locked = false;
         withinToleranceSinceNanos = -1;
+        rawTurnPower = 0.0;
         controller.reset();
     }
 

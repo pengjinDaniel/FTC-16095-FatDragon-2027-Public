@@ -9,7 +9,6 @@ import com.qualcomm.robotcore.hardware.HardwareMap;
 import org.firstinspires.ftc.robotcore.external.navigation.Pose2D;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
-import org.firstinspires.ftc.robotcore.external.navigation.UnnormalizedAngleUnit;
 
 public class Drive extends SubsystemBase {
     public final DcMotorEx leftFrontMotor;
@@ -17,6 +16,14 @@ public class Drive extends SubsystemBase {
     public final DcMotorEx rightFrontMotor;
     public final DcMotorEx rightBackMotor;
     private final GoBildaPinpointDriver pinpoint;
+    private boolean fieldPoseInitialized;
+    private double lastVisionTimestamp = Double.NaN;
+    private double lastAcceptedVisionTimestamp = Double.NaN;
+    private int rejectedVisionFrameCount;
+    private boolean visionCorrectionForced;
+    private double visionPositionDifferenceInches = Double.NaN;
+    private double visionHeadingDifferenceDegrees = Double.NaN;
+    private String visionCorrectionStatus = "Waiting for corrected vision";
 
     public Drive(HardwareMap hardwareMap) {
         leftFrontMotor = hardwareMap.get(DcMotorEx.class, DriveConstants.leftFrontMotorName);
@@ -55,6 +62,14 @@ public class Drive extends SubsystemBase {
     @Override
     public void periodic() {
         pinpoint.update();
+        if (pinpoint.getDeviceStatus() != GoBildaPinpointDriver.DeviceStatus.READY) {
+            fieldPoseInitialized = false;
+            lastVisionTimestamp = Double.NaN;
+            lastAcceptedVisionTimestamp = Double.NaN;
+            resetVisionRejectionSequence();
+            visionCorrectionForced = false;
+            visionCorrectionStatus = "Pinpoint not ready";
+        }
     }
 
     public Pose2D getPose() {
@@ -62,21 +77,99 @@ public class Drive extends SubsystemBase {
     }
 
     public void setPose(Pose2D pose) {
-        if (pose == null
-                || !Double.isFinite(pose.getX(DistanceUnit.INCH))
-                || !Double.isFinite(pose.getY(DistanceUnit.INCH))
-                || !Double.isFinite(pose.getHeading(AngleUnit.RADIANS))) {
+        if (!isFinitePose(pose)) {
             throw new IllegalArgumentException("Pose must be finite");
         }
         pinpoint.setPosition(pose);
+        // setPosition writes hardware registers; refresh the SDK bulk-read cache.
+        pinpoint.update();
+        fieldPoseInitialized = pinpoint.getDeviceStatus()
+                == GoBildaPinpointDriver.DeviceStatus.READY;
     }
 
-    public void setXYInches(double xInches, double yInches) {
-        if (!Double.isFinite(xInches) || !Double.isFinite(yInches)) {
-            throw new IllegalArgumentException("Pose coordinates must be finite");
+    public boolean calibrateFieldPose(Pose2D pose, double visionTimestamp) {
+        if (!DriveConstants.pinpointConfigurationConfirmed
+                || pinpoint.getDeviceStatus() != GoBildaPinpointDriver.DeviceStatus.READY) {
+            visionCorrectionStatus = "Pinpoint not ready for vision";
+            resetVisionRejectionSequence();
+            return false;
         }
-        pinpoint.setPosX(xInches, DistanceUnit.INCH);
-        pinpoint.setPosY(yInches, DistanceUnit.INCH);
+        if (!isFinitePose(pose) || !Double.isFinite(visionTimestamp) || visionTimestamp <= 0.0) {
+            visionCorrectionStatus = "Invalid corrected vision pose";
+            resetVisionRejectionSequence();
+            return false;
+        }
+        // Count rejected physical frames once, even when the same frame is read repeatedly.
+        if (visionTimestamp == lastVisionTimestamp) {
+            return false;
+        }
+        lastVisionTimestamp = visionTimestamp;
+        visionCorrectionForced = false;
+        if (!Double.isFinite(DriveConstants.maximumVisionPositionDifferenceInches)
+                || DriveConstants.maximumVisionPositionDifferenceInches < 0.0
+                || !Double.isFinite(DriveConstants.maximumVisionHeadingDifferenceDegrees)
+                || DriveConstants.maximumVisionHeadingDifferenceDegrees < 0.0
+                || DriveConstants.visionRejectedFramesBeforeOverride < 1) {
+            visionCorrectionStatus = "Invalid vision correction gates";
+            resetVisionRejectionSequence();
+            return false;
+        }
+        Pose2D predictedPose = getPose();
+        boolean initialized = fieldPoseInitialized;
+        visionPositionDifferenceInches = isFinitePose(predictedPose) ? Math.hypot(
+                pose.getX(DistanceUnit.INCH) - predictedPose.getX(DistanceUnit.INCH),
+                pose.getY(DistanceUnit.INCH) - predictedPose.getY(DistanceUnit.INCH)) : Double.NaN;
+        visionHeadingDifferenceDegrees = isFinitePose(predictedPose) ? Math.abs(Math.IEEEremainder(
+                pose.getHeading(AngleUnit.DEGREES) - predictedPose.getHeading(AngleUnit.DEGREES),
+                360.0)) : Double.NaN;
+        boolean outsideGate = initialized && (
+                visionPositionDifferenceInches > DriveConstants.maximumVisionPositionDifferenceInches
+                || visionHeadingDifferenceDegrees > DriveConstants.maximumVisionHeadingDifferenceDegrees);
+        if (outsideGate) {
+            rejectedVisionFrameCount++;
+            if (rejectedVisionFrameCount < DriveConstants.visionRejectedFramesBeforeOverride) {
+                visionCorrectionStatus = "Rejected vision jump; waiting for override";
+                return false;
+            }
+            // User policy: repeated good, fresh MT1 corrections take priority over odometry.
+            visionCorrectionForced = true;
+        }
+        setPose(pose);
+        if (fieldPoseInitialized) {
+            lastAcceptedVisionTimestamp = visionTimestamp;
+            resetVisionRejectionSequence();
+            visionCorrectionStatus = visionCorrectionForced ? "Forced vision override"
+                    : initialized ? "Vision correction applied" : "Initialized from first corrected frame";
+        } else {
+            visionCorrectionStatus = "Pinpoint not ready after vision write";
+        }
+        return fieldPoseInitialized;
+    }
+
+    private static boolean isFinitePose(Pose2D pose) {
+        return pose != null
+                && Double.isFinite(pose.getX(DistanceUnit.INCH))
+                && Double.isFinite(pose.getY(DistanceUnit.INCH))
+                && Double.isFinite(pose.getHeading(AngleUnit.RADIANS));
+    }
+
+    public void resetVisionRejectionSequence() {
+        rejectedVisionFrameCount = 0;
+    }
+
+    public boolean hasAcceptedVisionFrame(double timestamp) {
+        return fieldPoseInitialized && Double.isFinite(timestamp)
+                && timestamp == lastAcceptedVisionTimestamp;
+    }
+
+    public String getVisionCorrectionStatus() { return visionCorrectionStatus; }
+    public int getRejectedVisionFrameCount() { return rejectedVisionFrameCount; }
+    public boolean wasVisionCorrectionForced() { return visionCorrectionForced; }
+    public double getVisionPositionDifferenceInches() { return visionPositionDifferenceInches; }
+    public double getVisionHeadingDifferenceDegrees() { return visionHeadingDifferenceDegrees; }
+
+    public boolean isFieldPoseInitialized() {
+        return fieldPoseInitialized;
     }
 
     public GoBildaPinpointDriver.DeviceStatus getPinpointStatus() {
@@ -88,10 +181,6 @@ public class Drive extends SubsystemBase {
                 pinpoint.getVelX(DistanceUnit.INCH),
                 pinpoint.getVelY(DistanceUnit.INCH)
         );
-    }
-
-    public double getHeadingSpeedDegreesPerSecond() {
-        return Math.abs(pinpoint.getHeadingVelocity(UnnormalizedAngleUnit.DEGREES));
     }
 
     public void stop() {

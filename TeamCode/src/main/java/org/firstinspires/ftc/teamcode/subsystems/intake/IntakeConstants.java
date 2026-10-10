@@ -16,7 +16,6 @@ public class IntakeConstants {
     public static double ballEnterDistanceCm = 2.0;
     public static double ballExitDistanceCm = 2.5;
 
-    // Populate measured positions before enabling the flower servos.
     public static boolean flowerPositionsCalibrated = false;
     public static double leftFlowerRaisedPosition = Double.NaN;
     public static double rightFlowerRaisedPosition = Double.NaN;
