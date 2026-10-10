@@ -17,3 +17,19 @@ dependencies {
     implementation project(':FtcRobotController')
     implementation 'org.ftclib.ftclib:core:2.1.1'
 }
+
+// Added local Pedro test support; upstream configuration above is unchanged.
+repositories { maven { url 'https://repo.dairy.foundation/releases/' } }
+dependencies { implementation 'com.pedropathing:revhub:3.0.1' }
+
+// Added local copies of the user's downloaded official Dashboard artifacts.
+rootProject.allprojects {
+    repositories {
+        exclusiveContent {
+            forRepository {
+                maven { name = 'LocalDashboard'; url = rootProject.file('local-maven').toURI() }
+            }
+            filter { includeGroup 'com.acmerobotics.dashboard' }
+        }
+    }
+}
