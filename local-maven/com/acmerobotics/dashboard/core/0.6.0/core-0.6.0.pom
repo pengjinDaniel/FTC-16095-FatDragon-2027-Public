@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+<modelVersion>4.0.0</modelVersion><groupId>com.acmerobotics.dashboard</groupId><artifactId>core</artifactId><version>0.6.0</version><name>FTC Dashboard</name>
+<description>Web dashboard designed for FTC</description>
+<url>https://github.com/acmerobotics/ftc-dashboard</url>
+<licenses><license><name>The MIT License</name><url>https://opensource.org/licenses/MIT</url><distribution>repo</distribution></license></licenses>
+<developers><developer><id>rbrott</id><name>Ryan Brott</name><email>rcbrott@gmail.com</email></developer></developers>
+<scm><url>https://github.com/acmerobotics/ftc-dashboard</url></scm></project>
