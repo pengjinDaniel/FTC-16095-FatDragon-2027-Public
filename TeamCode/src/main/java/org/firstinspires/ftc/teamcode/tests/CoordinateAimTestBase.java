@@ -30,6 +30,7 @@ public abstract class CoordinateAimTestBase extends OpMode {
     private boolean aimRequested;
     private boolean manualTranslation;
     private boolean stopLatched;
+    private boolean driverHeadingResetPressed;
     private double turnPower;
     private FtcDashboard dashboard;
     private long aimStartNanos = -1;
@@ -44,6 +45,7 @@ public abstract class CoordinateAimTestBase extends OpMode {
         started = false;
         aimRequested = false;
         stopLatched = false;
+        driverHeadingResetPressed = false;
         turnPower = 0.0;
         aimStartNanos = -1;
         timeToLockSeconds = -1.0;
@@ -65,6 +67,9 @@ public abstract class CoordinateAimTestBase extends OpMode {
 
     @Override
     public void start() {
+        drive.periodic();
+        drive.resetDriverHeading();
+        driverHeadingResetPressed = gamepad1.left_stick_button;
         started = true;
     }
 
@@ -74,6 +79,10 @@ public abstract class CoordinateAimTestBase extends OpMode {
         loopDtSeconds = lastLoopNanos == 0 ? 0.0 : (now - lastLoopNanos) / 1_000_000_000.0;
         lastLoopNanos = now;
         updateSensors();
+        if (gamepad1.left_stick_button && !driverHeadingResetPressed) {
+            drive.resetDriverHeading();
+        }
+        driverHeadingResetPressed = gamepad1.left_stick_button;
         aimRequested = gamepad1.right_trigger > TeleOpConstants.triggerThreshold;
         double forward = -applyDeadband(gamepad1.left_stick_y);
         double strafe = applyDeadband(gamepad1.left_stick_x);
@@ -111,16 +120,21 @@ public abstract class CoordinateAimTestBase extends OpMode {
             }
             turnPower = autoAim.calculateTurnPower(
                     vision.hasValidAimingTarget(),
-                    vision.getYawErrorDegrees()
+                    vision.getYawErrorDegrees(),
+                    drive.getHeadingVelocityDegreesPerSecond()
             );
             double maxTurnPower = getEffectiveMaxTurnPower();
             turnPower = Range.clip(turnPower, -maxTurnPower, maxTurnPower);
-            drive.moveRobot(forward, strafe, turnPower);
+            if (manualTranslation) {
+                drive.moveFieldCentric(forward, strafe, turnPower);
+            } else {
+                drive.moveRobot(forward, strafe, turnPower);
+            }
         } else {
             autoAim.reset();
             positionHold.reset();
             turnPower = applyDeadband(gamepad1.right_stick_x);
-            drive.moveRobot(forward, strafe, turnPower);
+            drive.moveFieldCentric(forward, strafe, turnPower);
         }
         if (aimStartNanos >= 0 && timeToLockSeconds < 0.0 && autoAim.isLocked()) {
             timeToLockSeconds = (System.nanoTime() - aimStartNanos) / 1_000_000_000.0;
@@ -147,7 +161,7 @@ public abstract class CoordinateAimTestBase extends OpMode {
     }
 
     private void showTelemetry() {
-        telemetry.addLine("RT: coordinate aim | A: vision calibration | B: stop until RT release");
+        telemetry.addLine("Field-relative drive | L3: reset forward | RT: aim | A: calibrate | B: stop");
         telemetry.addData("Control Mode", stopLatched ? "STOPPED"
                 : aimRequested ? "COORDINATE CELL AIM" : "MANUAL DRIVE");
         telemetry.addData("Alliance", getAlliance());
@@ -179,8 +193,7 @@ public abstract class CoordinateAimTestBase extends OpMode {
         telemetry.addData("Vision Correction Status", drive.getVisionCorrectionStatus());
         telemetry.addData("Vision Difference (in / deg)", "%.2f / %.2f",
                 drive.getVisionPositionDifferenceInches(), drive.getVisionHeadingDifferenceDegrees());
-        telemetry.addData("Rejected New Frames / Forced", "%d / %b",
-                drive.getRejectedVisionFrameCount(), drive.wasVisionCorrectionForced());
+        telemetry.addData("Rejected New Frames", drive.getRejectedVisionFrameCount());
         telemetry.addData("Visible Tags", vision.getVisibleTagIds());
         telemetry.addData("CELL States", vision.getObservedClusterStates());
         telemetry.addData("Selected CELL",
@@ -204,10 +217,14 @@ public abstract class CoordinateAimTestBase extends OpMode {
         telemetry.addData("Horizontal Distance (in)", vision.getTargetHorizontalDistanceInches());
         telemetry.addData("Turn Power", turnPower);
         telemetry.addData("Raw Aim Turn Power", autoAim.getRawTurnPower());
+        telemetry.addData("Aim D Turn Power", autoAim.getDerivativeTurnPower());
+        telemetry.addData("Heading Velocity (deg/s)", drive.getHeadingVelocityDegreesPerSecond());
         telemetry.addData("Effective Aim Turn Limit", getEffectiveMaxTurnPower());
         telemetry.addData("Aim Locked", autoAim.isLocked());
         telemetry.addData("Time to First Lock (s)", timeToLockSeconds);
         telemetry.addData("Pinpoint Status", drive.getPinpointStatus());
+        telemetry.addData("Driver Heading (deg)", Math.toDegrees(drive.getDriverHeadingRadians()));
+        telemetry.addData("Driver Heading Ready", Double.isFinite(drive.getDriverHeadingRadians()));
         Pose2D pose = drive.getPose();
         telemetry.addData("Pinpoint field X/Y/H", "%.2f, %.2f in / %.1f deg",
                 pose.getX(DistanceUnit.INCH), pose.getY(DistanceUnit.INCH),
@@ -221,9 +238,13 @@ public abstract class CoordinateAimTestBase extends OpMode {
             TelemetryPacket packet = new TelemetryPacket();
             packet.put("aimErrorDeg", vision.getYawErrorDegrees());
             packet.put("turnPowerRaw", autoAim.getRawTurnPower());
+            packet.put("turnPowerD", autoAim.getDerivativeTurnPower());
+            packet.put("headingVelocityDegPerSec", drive.getHeadingVelocityDegreesPerSecond());
             packet.put("turnPowerApplied", turnPower);
             packet.put("effectiveMaxTurnPower", getEffectiveMaxTurnPower());
             packet.put("headingDeg", pose.getHeading(AngleUnit.DEGREES));
+            packet.put("driverHeadingDeg", Math.toDegrees(drive.getDriverHeadingRadians()));
+            packet.put("driverHeadingReady", Double.isFinite(drive.getDriverHeadingRadians()));
             packet.put("desiredHeadingDeg", vision.getDesiredHeadingDegrees());
             packet.put("aimRequested", aimRequested);
             packet.put("aimLocked", autoAim.isLocked());

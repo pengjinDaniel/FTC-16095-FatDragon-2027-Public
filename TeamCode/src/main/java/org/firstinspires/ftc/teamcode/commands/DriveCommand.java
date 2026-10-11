@@ -22,7 +22,7 @@ public class DriveCommand extends CommandBase {
         double strafe = applyDeadband(gamepadEx.getLeftX());
         double turn = applyDeadband(gamepadEx.getRightX());
 
-        drive.moveRobot(forward, strafe, turn);
+        drive.moveFieldCentric(forward, strafe, turn);
     }
 
     @Override

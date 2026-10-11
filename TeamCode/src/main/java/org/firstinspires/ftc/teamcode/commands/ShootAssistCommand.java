@@ -4,6 +4,7 @@ import com.arcrobotics.ftclib.command.CommandBase;
 import com.arcrobotics.ftclib.gamepad.GamepadEx;
 import com.arcrobotics.ftclib.gamepad.GamepadKeys;
 import com.qualcomm.robotcore.util.ElapsedTime;
+import com.qualcomm.robotcore.util.Range;
 
 import org.firstinspires.ftc.teamcode.subsystems.drive.AutoAimController;
 import org.firstinspires.ftc.teamcode.subsystems.drive.Drive;
@@ -30,6 +31,7 @@ public class ShootAssistCommand extends CommandBase {
     private boolean active;
     private boolean canPrepareToFire;
     private boolean manualTranslation;
+    private double turnPower;
     private FiringState firingState = FiringState.IDLE;
 
     public enum FiringState {
@@ -66,6 +68,7 @@ public class ShootAssistCommand extends CommandBase {
         autoAim.reset();
         positionHold.reset();
         manualTranslation = false;
+        turnPower = 0.0;
         resetFiringSequence(FiringState.WAITING);
     }
 
@@ -93,9 +96,15 @@ public class ShootAssistCommand extends CommandBase {
             transit.forward();
         }
 
-        double autoAimTurn = updateShootRequest(jamRequested);
+        turnPower = updateShootRequest(jamRequested);
+        double maxTurnPower = getEffectiveMaxTurnPower();
+        turnPower = Range.clip(turnPower, -maxTurnPower, maxTurnPower);
 
-        drive.moveRobot(forward, strafe, autoAimTurn);
+        if (manualTranslation) {
+            drive.moveFieldCentric(forward, strafe, turnPower);
+        } else {
+            drive.moveRobot(forward, strafe, turnPower);
+        }
     }
 
     @Override
@@ -104,6 +113,7 @@ public class ShootAssistCommand extends CommandBase {
         autoAim.reset();
         positionHold.reset();
         manualTranslation = false;
+        turnPower = 0.0;
         resetFiringSequence(FiringState.IDLE);
         shooter.idle();
         drive.stop();
@@ -137,6 +147,20 @@ public class ShootAssistCommand extends CommandBase {
         return manualTranslation;
     }
 
+    public double getTurnPower() {
+        return turnPower;
+    }
+
+    public static double getEffectiveMaxTurnPower() {
+        double controllerLimit = DriveConstants.autoAimMaxTurnPower;
+        double testedLimit = DriveConstants.autoAimTestMaxTurnPower;
+        if (!Double.isFinite(controllerLimit) || !Double.isFinite(testedLimit)
+                || controllerLimit < 0.0 || testedLimit < 0.0) {
+            return 0.0;
+        }
+        return Math.min(1.0, Math.min(controllerLimit, testedLimit));
+    }
+
     public double getLimitOpenTimerElapsedSeconds() {
         if (firingState == FiringState.LIMIT_OPENING) {
             return limitOpenTimer.seconds();
@@ -161,7 +185,6 @@ public class ShootAssistCommand extends CommandBase {
     }
 
     private double updateShootRequest(boolean jamRequested) {
-        vision.updateFieldTarget(drive, !jamRequested);
         if (jamRequested) {
             shooter.idle();
             autoAim.reset();
@@ -173,21 +196,16 @@ public class ShootAssistCommand extends CommandBase {
         boolean validShootingTarget = vision.hasValidShootingTarget();
         double autoAimTurn = autoAim.calculateTurnPower(
                 validAimingTarget,
-                vision.getYawErrorDegrees()
+                vision.getYawErrorDegrees(),
+                drive.getHeadingVelocityDegreesPerSecond()
         );
 
-        if (validShootingTarget) {
-            boolean targetAccepted = shooter.setTargetFromDistance(
-                    vision.getTargetHorizontalDistanceInches()
-            );
-            if (!targetAccepted) {
-                shooter.idle();
-            }
-        } else {
-            shooter.idle();
+        if (!shooter.startFixedPower()) {
+            shooter.stop();
         }
 
         canPrepareToFire = active
+                && !manualTranslation
                 && validShootingTarget
                 && vision.getTargetHiveState() == HiveState.HIGH
                 && shooter.isReady()

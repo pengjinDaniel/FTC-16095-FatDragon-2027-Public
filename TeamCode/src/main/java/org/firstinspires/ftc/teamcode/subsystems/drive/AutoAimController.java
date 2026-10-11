@@ -14,11 +14,25 @@ public class AutoAimController {
     private boolean locked;
     private long withinToleranceSinceNanos = -1;
     private double rawTurnPower;
+    private double derivativeTurnPower;
 
     public double calculateTurnPower(boolean hasValidTarget, double yawErrorDegrees) {
+        return calculateTurnPower(hasValidTarget, yawErrorDegrees, 0.0, false);
+    }
+
+    public double calculateTurnPower(boolean hasValidTarget, double yawErrorDegrees,
+                                    double headingVelocityDegreesPerSecond) {
+        return calculateTurnPower(hasValidTarget, yawErrorDegrees,
+                headingVelocityDegreesPerSecond, true);
+    }
+
+    private double calculateTurnPower(boolean hasValidTarget, double yawErrorDegrees,
+                                      double headingVelocityDegreesPerSecond,
+                                      boolean useHeadingVelocity) {
         double maxTurnPower = DriveConstants.autoAimMaxTurnPower;
         if (!hasValidTarget || !Double.isFinite(yawErrorDegrees)
-                || !Double.isFinite(maxTurnPower) || maxTurnPower < 0.0) {
+                || !Double.isFinite(maxTurnPower) || maxTurnPower < 0.0
+                || (useHeadingVelocity && !Double.isFinite(headingVelocityDegreesPerSecond))) {
             reset();
             return 0.0;
         }
@@ -26,19 +40,33 @@ public class AutoAimController {
         controller.setPIDF(
                 DriveConstants.autoAimKp,
                 DriveConstants.autoAimKi,
-                DriveConstants.autoAimKd,
+                useHeadingVelocity ? 0.0 : DriveConstants.autoAimKd,
                 DriveConstants.autoAimKf
         );
         updateLockState(Math.abs(yawErrorDegrees));
 
-        // A fixed setpoint lets FTCLib differentiate changes in the measurement.
-        double output = controller.calculate(-Math.toRadians(yawErrorDegrees), 0.0)
+        double positionErrorDegrees = yawErrorDegrees;
+        double acceptedToleranceDegrees = locked
+                ? DriveConstants.aimUnlockToleranceDegrees : DriveConstants.aimLockToleranceDegrees;
+        if (useHeadingVelocity && Math.abs(yawErrorDegrees) <= acceptedToleranceDegrees) {
+            // Stop chasing accepted-angle noise; measured-rate braking remains active.
+            positionErrorDegrees = 0.0;
+            controller.clearTotalError();
+        }
+
+        double pidOutput = controller.calculate(-Math.toRadians(positionErrorDegrees), 0.0);
+        // Pose corrections and angle wrapping must not be mistaken for physical rotation.
+        double derivativeOutput = useHeadingVelocity
+                ? -DriveConstants.autoAimKd * Math.toRadians(headingVelocityDegreesPerSecond)
+                : DriveConstants.autoAimKd * controller.getVelocityError();
+        double output = (pidOutput + (useHeadingVelocity ? derivativeOutput : 0.0))
                 * DriveConstants.autoAimYawToTurnSign;
         if (!Double.isFinite(output)) {
             reset();
             return 0.0;
         }
         rawTurnPower = output;
+        derivativeTurnPower = derivativeOutput * DriveConstants.autoAimYawToTurnSign;
         return Range.clip(
                 output,
                 -Math.min(maxTurnPower, 1.0),
@@ -50,6 +78,10 @@ public class AutoAimController {
         return rawTurnPower;
     }
 
+    public double getDerivativeTurnPower() {
+        return derivativeTurnPower;
+    }
+
     public boolean isLocked() {
         return locked;
     }
@@ -58,13 +90,16 @@ public class AutoAimController {
         locked = false;
         withinToleranceSinceNanos = -1;
         rawTurnPower = 0.0;
+        derivativeTurnPower = 0.0;
         controller.reset();
     }
 
     private void updateLockState(double absoluteYawErrorDegrees) {
         if (locked) {
             if (absoluteYawErrorDegrees > DriveConstants.aimUnlockToleranceDegrees) {
-                reset();
+                // Keep PID history while unlocking so derivative braking stays active.
+                locked = false;
+                withinToleranceSinceNanos = -1;
             }
             return;
         }
