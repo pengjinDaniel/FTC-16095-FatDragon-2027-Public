@@ -155,13 +155,14 @@ public abstract class CoordinateAimTestBase extends OpMode {
     private void updateSensors() {
         drive.periodic();
         vision.update();
-        boolean correctFromVision = !started || (!stopLatched && !gamepad1.b
-                && (gamepad1.a || gamepad1.right_trigger > TeleOpConstants.triggerThreshold));
+        boolean correctFromVision = gamepad1.right_trigger <= TeleOpConstants.triggerThreshold;
+        vision.setAimSelectionHeld(started && !stopLatched && !gamepad1.b
+                && !correctFromVision);
         vision.updateFieldTarget(drive, correctFromVision);
     }
 
     private void showTelemetry() {
-        telemetry.addLine("Field-relative drive | L3: reset forward | RT: aim | A: calibrate | B: stop");
+        telemetry.addLine("Field-relative drive | L3: reset forward | RT: aim (pause calibration) | release RT: calibrate | B: stop");
         telemetry.addData("Control Mode", stopLatched ? "STOPPED"
                 : aimRequested ? "COORDINATE CELL AIM" : "MANUAL DRIVE");
         telemetry.addData("Alliance", getAlliance());
@@ -172,9 +173,9 @@ public abstract class CoordinateAimTestBase extends OpMode {
         telemetry.addData("MT1 Tag Count / Age (ms)", "%d / %d",
                 vision.getBotposeTagCount(), vision.getResultAgeMs());
         telemetry.addData("Area-qualified Alliance Tags", vision.getUsableTagCount());
-        telemetry.addData("Raw MT1 Pose", vision.getRawRobotFieldPose()
+        telemetry.addData("Raw MT1 (centered map; NOT field XY)", vision.getRawRobotFieldPose()
                 .map(Object::toString).orElse("NONE"));
-        telemetry.addData("Corrected Vision Pose", vision.getCorrectedRobotFieldPose()
+        telemetry.addData("Vision Field Pose (center 72/72 in)", vision.getCorrectedRobotFieldPose()
                 .map(Object::toString).orElse("NONE"));
         telemetry.addData("HIVE Angle (deg)", vision.getHiveAngleDegrees());
         telemetry.addData("Robot Level Error (deg)", vision.getRobotLevelErrorDegrees());
@@ -226,7 +227,7 @@ public abstract class CoordinateAimTestBase extends OpMode {
         telemetry.addData("Driver Heading (deg)", Math.toDegrees(drive.getDriverHeadingRadians()));
         telemetry.addData("Driver Heading Ready", Double.isFinite(drive.getDriverHeadingRadians()));
         Pose2D pose = drive.getPose();
-        telemetry.addData("Pinpoint field X/Y/H", "%.2f, %.2f in / %.1f deg",
+        telemetry.addData("Pinpoint field X/Y/H (center 72/72 in)", "%.2f, %.2f in / %.1f deg",
                 pose.getX(DistanceUnit.INCH), pose.getY(DistanceUnit.INCH),
                 pose.getHeading(AngleUnit.DEGREES));
         telemetry.addData("Position Hold Calibrated", DriveConstants.positionHoldCalibrated);

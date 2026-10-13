@@ -13,11 +13,11 @@ public class VisionConstants {
     public static double minimumTargetArea = 0.01;
     public static int minimumBotposeTagCount = 2;
 
-    // 19725 flat-HIVE map: field-center origin, inches, +X toward the audience.
+    // Unified field frame: inches, center (72,72), +X toward blue, +Y away from audience.
     // Target order follows CellCluster.getTuningIndex(). User selected these references.
     public static double[][] cellTargetFieldXYInches = {
-            {-17.7, -12.75}, {17.7, -12.75},
-            {17.7, 12.75}, {-17.7, 12.75}
+            {59.25, 89.7}, {59.25, 54.3},
+            {84.75, 54.3}, {84.75, 89.7}
     };
     public static double hivePivotHeightInches = 43.95;
     public static double maximumHiveTiltDegrees = 35.0;

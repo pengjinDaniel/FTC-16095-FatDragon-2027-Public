@@ -89,12 +89,12 @@ public class VisionCalibrationCheck {
         for (Alliance alliance : Alliance.values()) {
             set(vision,"alliance",alliance);
             vision.setAimSelectionHeld(false);
-            drive.position=pose(-40,0); vision.updateFieldTarget(drive,false);
-            CellCluster left=CellCluster.forFieldX(alliance,-40).get();
-            CellCluster right=CellCluster.forFieldX(alliance,40).get();
+            drive.position=FieldCoordinates.fromCenteredHiveMap(pose(-40,0)); vision.updateFieldTarget(drive,false);
+            CellCluster left=CellCluster.forFieldPose(alliance,FieldCoordinates.fromCenteredHiveMap(pose(-40,0))).get();
+            CellCluster right=CellCluster.forFieldPose(alliance,FieldCoordinates.fromCenteredHiveMap(pose(40,0))).get();
             check(vision.getSelectedCluster().get()==left,"negative half selects its own CELL");
             vision.setAimSelectionHeld(true); vision.updateFieldTarget(drive,false);
-            drive.position=pose(40,0); vision.updateFieldTarget(drive,false);
+            drive.position=FieldCoordinates.fromCenteredHiveMap(pose(40,0)); vision.updateFieldTarget(drive,false);
             check(vision.getSelectedCluster().get()==left,"held R2 intentionally preserves selected CELL");
             vision.setAimSelectionHeld(false); vision.updateFieldTarget(drive,false);
             check(vision.getSelectedCluster().get()==right,"release R2 on positive half selects other CELL");

@@ -75,6 +75,8 @@ public class Drive extends SubsystemBase {
         }
     }
 
+    // After vision initialization: FieldCoordinates frame, center (72,72) inches.
+    // Before initialization this is only local odometry, not a known field location.
     public Pose2D getPose() {
         return pinpoint.getPosition();
     }
