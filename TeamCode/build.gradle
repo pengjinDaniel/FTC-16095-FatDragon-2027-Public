@@ -19,8 +19,9 @@ dependencies {
 }
 
 // Added local Pedro test support; upstream configuration above is unchanged.
-repositories { maven { url 'https://repo.dairy.foundation/releases/' } }
-dependencies { implementation 'com.pedropathing:revhub:3.0.1' }
+// Paused with the independent Pedro tests on 2026-10-13.
+// repositories { maven { url 'https://repo.dairy.foundation/releases/' } }
+// dependencies { implementation 'com.pedropathing:revhub:3.0.1' }
 
 // Added local copies of the user's downloaded official Dashboard artifacts.
 rootProject.allprojects {

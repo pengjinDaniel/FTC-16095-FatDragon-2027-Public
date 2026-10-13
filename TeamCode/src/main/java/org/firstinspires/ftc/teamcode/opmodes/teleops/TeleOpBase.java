@@ -49,6 +49,10 @@ public abstract class TeleOpBase extends CommandOpMode {
 
     protected abstract Alliance getAlliance();
 
+    protected Vision createVision() {
+        return new Vision(hardwareMap, getAlliance());
+    }
+
     @Override
     public void initialize() {
         started = false;
@@ -63,7 +67,7 @@ public abstract class TeleOpBase extends CommandOpMode {
         shooter = new Shooter(hardwareMap);
         intake = new Intake(hardwareMap);
         transit = new Transit(hardwareMap);
-        vision = new Vision(hardwareMap, getAlliance());
+        vision = createVision();
         autoAim = new AutoAimController();
         GamepadEx gamepadEx = new GamepadEx(gamepad1);
 
@@ -110,6 +114,8 @@ public abstract class TeleOpBase extends CommandOpMode {
             stopLatched = false;
         }
 
+        vision.setAimSelectionHeld(aimRequested && !stopLatched);
+
         if (!aimRequested || stopLatched) {
             aimStartNanos = -1;
             timeToLockSeconds = -1.0;
@@ -148,12 +154,18 @@ public abstract class TeleOpBase extends CommandOpMode {
         telemetry.addData("Alliance", vision.getAlliance());
         telemetry.addData("Target Status", vision.getTargetStatus());
         telemetry.addData("Vision Pose Status", vision.getPoseStatus());
+        telemetry.addData("Localization Mode", vision.getLocalizationMode());
+        telemetry.addData("Calibration Tags Used", vision.getLocalizationTagCount());
+        if (vision.getLocalizationMode() == Vision.LocalizationMode.SINGLE_TAG) {
+            telemetry.addData("Single Tag expected / used", "%d / %d",
+                    vision.getExpectedCalibrationTagId(), vision.getCalibrationTagId());
+        }
         telemetry.addData("Pipeline expected/actual", "%d / %d",
                 vision.getExpectedPipelineIndex(), vision.getActualPipelineIndex());
         telemetry.addData("MT1 Tag Count / Age (ms)", "%d / %d",
                 vision.getBotposeTagCount(), vision.getResultAgeMs());
         telemetry.addData("Area-qualified Alliance Tags", vision.getUsableTagCount());
-        telemetry.addData("Raw MT1 Pose", vision.getRawRobotFieldPose()
+        telemetry.addData("Raw Localization Pose", vision.getRawRobotFieldPose()
                 .map(Object::toString).orElse("NONE"));
         telemetry.addData("Corrected Vision Pose", vision.getCorrectedRobotFieldPose()
                 .map(Object::toString).orElse("NONE"));
@@ -176,6 +188,9 @@ public abstract class TeleOpBase extends CommandOpMode {
                 drive.getVisionPositionDifferenceInches(), drive.getVisionHeadingDifferenceDegrees());
         telemetry.addData("Rejected New Frames", drive.getRejectedVisionFrameCount());
         telemetry.addData("Visible Tags", vision.getVisibleTagIds());
+        telemetry.addData("Detected Tags (all)", vision.getDetectedTagIds());
+        telemetry.addData("Single Tag delta XY / yaw vs MT1", vision.getTagPoseAgreement());
+        telemetry.addData("HIVE Correction Yaw Delta (deg)", vision.getRawToCorrectedHeadingDeltaDegrees());
         telemetry.addData("Alliance Tag Visible", vision.hasVisibleAllianceTag());
         telemetry.addData("Tag Z (in)", vision.getVisibleTagHeightsInches());
         for (Map.Entry<Integer, Pose3D> entry
@@ -193,7 +208,9 @@ public abstract class TeleOpBase extends CommandOpMode {
                 "Selected Cluster",
                 vision.getSelectedCluster().map(Enum::name).orElse("NONE")
         );
-        telemetry.addData("Selected Tag", vision.getSelectedTagId());
+        telemetry.addData("RT Latched CELL",
+                vision.getLatchedAimCluster().map(Enum::name).orElse("NONE"));
+        telemetry.addData("Representative Tag (display only)", vision.getSelectedTagId());
         telemetry.addData("Hive State", vision.getTargetHiveState());
         telemetry.addData("Valid Aim Target", vision.hasValidAimingTarget());
         telemetry.addData("Valid HIGH Target", vision.hasValidShootingTarget());
@@ -273,6 +290,18 @@ public abstract class TeleOpBase extends CommandOpMode {
         packet.put("timeToLockSec", timeToLockSeconds);
         packet.put("validAimTarget", vision.hasValidAimingTarget());
         packet.put("visionCorrectionApplied", vision.wasCorrectionApplied());
+        packet.put("localizationMode", vision.getLocalizationMode().name());
+        packet.put("localizationTagCount", vision.getLocalizationTagCount());
+        packet.put("expectedCalibrationTagId", vision.getExpectedCalibrationTagId());
+        packet.put("calibrationTagId", vision.getCalibrationTagId());
+        packet.put("detectedTagIds", vision.getDetectedTagIds().toString());
+        packet.put("mt1TagCount", vision.getBotposeTagCount());
+        packet.put("qualifiedTagCount", vision.getUsableTagCount());
+        packet.put("singleTagVsMt1", vision.getTagPoseAgreement().toString());
+        packet.put("hiveCorrectionYawDeltaDeg", vision.getRawToCorrectedHeadingDeltaDegrees());
+        packet.put("visionPoseStatus", vision.getPoseStatus());
+        packet.put("visionCorrectionStatus", drive.getVisionCorrectionStatus());
+        packet.put("selectedCell", vision.getSelectedCluster().map(Enum::name).orElse("NONE"));
         packet.put("loopDtSec", loopDtSeconds);
         packet.put("autoAimKp", DriveConstants.autoAimKp);
         packet.put("autoAimKi", DriveConstants.autoAimKi);
