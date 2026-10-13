@@ -11,9 +11,9 @@ public class IntakeConstants {
     public static String leftFlowerServoName = "leftFlowerServo";
     public static String rightFlowerServoName = "rightFlowerServo";
 
-    public static double activePower = 0.8;
-    public static double fullReversePower = -0.7;
-    public static double jamPower = -0.9;
+    public static double activePower = 1;
+    public static double fullReversePower = -1;
+    public static double jamPower = -1;
     public static int maxBallCount = 4;
     public static double ballEnterDistanceCm = 2.0;
     public static double ballExitDistanceCm = 2.5;

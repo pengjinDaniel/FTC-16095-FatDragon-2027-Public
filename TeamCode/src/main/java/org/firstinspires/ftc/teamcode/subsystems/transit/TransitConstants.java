@@ -7,8 +7,8 @@ import com.qualcomm.robotcore.hardware.DcMotorSimple;
 public class TransitConstants {
     public static String transitMotorName = "transitMotor";
     public static DcMotorSimple.Direction transitMotorDirection = DcMotorSimple.Direction.REVERSE;
-    public static double forwardPower = 0.7;
-    public static double reversePower = -0.7;
+    public static double forwardPower = 1;
+    public static double reversePower = -1;
     public static String limitServoName = "limitServo";
     public static boolean limitPositionsCalibrated = true;
     public static double limitClosed = 0.5;
