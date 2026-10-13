@@ -18,8 +18,8 @@ public class ShooterConstants {
     public static double fixedPower = 0.8;
     public static String pitchServoName = "pitchServo";
     public static double pitchMinPosition = 0.0;
-    public static double pitchMaxPosition = 0.53;
-    public static double pitchStartPosition = 0.52;
+    public static double pitchMaxPosition = 0.5;
+    public static double pitchStartPosition = 0;
     public static double pitchSettleTimeSeconds = 0.2;
     public static double pitchChangeResetThreshold = 0.005;
     public static boolean velocityControlCalibrated = false;
