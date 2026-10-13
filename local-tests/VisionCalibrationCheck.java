@@ -60,6 +60,9 @@ public class VisionCalibrationCheck {
         Field uf=Unsafe.class.getDeclaredField("theUnsafe"); uf.setAccessible(true); Unsafe u=(Unsafe)uf.get(null);
         Vision vision=(Vision)u.allocateInstance(Vision.class); FakeDrive drive=(FakeDrive)u.allocateInstance(FakeDrive.class);
         drive.position=zero; drive.writeSucceeds=false;
+        check(drive.isVisionPoseWithinGate(pose(40,50)),"stable 1m/50deg relocalization is no longer rejected by old tight gates");
+        check(!drive.isVisionPoseWithinGate(pose(49,0)),"beyond enlarged position gate remains rejected");
+        check(!drive.isVisionPoseWithinGate(pose(0,61)),"beyond enlarged heading gate remains rejected");
         set(vision,"calibrationFilter",new VisionCalibrationFilter());
         for(int i=1;i<=3;i++) frame(vision,drive,i,i*20_000_000L,true,4);
         check(drive.attempts==1 && drive.writes==0,"production wiring attempts stable frame, actual write fails");

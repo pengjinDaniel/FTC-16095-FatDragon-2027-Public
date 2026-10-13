@@ -300,6 +300,9 @@ public class Vision extends SubsystemBase {
             if (drive.calibrateFieldPose(correctedRobotFieldPose, frameTimestamp)) {
                 correctionApplied = true;
                 calibrationFilter.onApplied(before, drive.getPose(), nowNanos);
+            } else if ("Rejected vision jump; using Pinpoint".equals(drive.getVisionCorrectionStatus())) {
+                calibrationFilter.onWriteRejected(drive.getVisionPositionDifferenceInches(),
+                        drive.getVisionHeadingDifferenceDegrees());
             } else calibrationFilter.onWriteRejected();
         }
         // Trust and writing are separate: holding R2 must not disable the firing interlock

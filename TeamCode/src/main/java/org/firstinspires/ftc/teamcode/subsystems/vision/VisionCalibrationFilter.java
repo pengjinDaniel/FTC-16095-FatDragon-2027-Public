@@ -77,6 +77,10 @@ public final class VisionCalibrationFilter {
         status="校准成功；150ms后允许下一次";
     }
     public void onWriteRejected() { status="校准未通过，持续尝试（不启动150ms计时）"; }
+    public void onWriteRejected(double positionDifferenceInches, double headingDifferenceDegrees) {
+        status=String.format(java.util.Locale.US,"校准未通过：与旧定位差 %.0fcm / %.1f°；继续尝试",
+                positionDifferenceInches*2.54,headingDifferenceDegrees);
+    }
     public void clear(String reason) { count=0; trusted=false; status=reason; }
     public boolean isTrusted() { return trusted; }
     public int getSampleCount() { return count; }

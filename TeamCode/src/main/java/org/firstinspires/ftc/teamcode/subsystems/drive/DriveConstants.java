@@ -26,9 +26,9 @@ public class DriveConstants {
             GoBildaPinpointDriver.EncoderDirection.FORWARD;
     public static GoBildaPinpointDriver.EncoderDirection pinpointStrafePodDirection =
             GoBildaPinpointDriver.EncoderDirection.FORWARD;
-    // Initial bring-up gates, not measured field accuracy. Outliers stay rejected.
-    public static double maximumVisionPositionDifferenceInches = 12.0;
-    public static double maximumVisionHeadingDifferenceDegrees = 30.0;
+    // Broad old-pose sanity bounds; VisionCalibrationFilter independently rejects unstable frames.
+    public static double maximumVisionPositionDifferenceInches = 48.0;
+    public static double maximumVisionHeadingDifferenceDegrees = 60.0;
     public static boolean positionHoldCalibrated = false;
     public static double positionHoldKp = 0.04;
     public static double positionHoldKi = 0.0;
@@ -44,7 +44,7 @@ public class DriveConstants {
     public static volatile double autoAimKd = -0.19;
     // Keep F at zero because the heading controller uses a zero setpoint.
     public static volatile double autoAimKf = 0.0;
-    public static volatile double autoAimYawToTurnSign = -1.0;
+    public static volatile double autoAimYawToTurnSign = 1.0;
     public static volatile double autoAimMaxTurnPower = 1;
     public static volatile double autoAimTestMaxTurnPower = 1;
     public static volatile double aimLockToleranceDegrees = 1.5;
