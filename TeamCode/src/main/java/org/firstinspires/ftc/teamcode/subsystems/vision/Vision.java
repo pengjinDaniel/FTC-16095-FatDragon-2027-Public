@@ -8,6 +8,7 @@ import com.qualcomm.hardware.limelightvision.Limelight3A;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
+import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.Pose2D;
 import org.firstinspires.ftc.robotcore.external.navigation.Pose3D;
 import org.firstinspires.ftc.robotcore.external.navigation.Position;
@@ -20,13 +21,20 @@ import java.util.Collections;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 
 public class Vision extends SubsystemBase {
+    public enum LocalizationMode { MULTI_TAG, SINGLE_TAG }
     private final Limelight3A limelight;
     private final Alliance alliance;
     private final int pipelineIndex;
+    private final LocalizationMode localizationMode;
+    private CellCluster preferredSingleTagCell;
+    private int expectedCalibrationTagId = -1;
+    private int calibrationTagId = -1;
+    private int localizationTagCount;
     private String poseStatus = "Waiting for AprilTags";
     private String targetStatus = "Field pose not initialized";
     private Pose3D rawRobotFieldPose;
@@ -59,15 +67,23 @@ public class Vision extends SubsystemBase {
     private double desiredHeadingDegrees = Double.NaN;
     private Pose3D representativeTagPoseRobotSpace;
     private CellCluster selectedCluster;
+    private final CellSelectionLatch aimCellSelection = new CellSelectionLatch();
     private HiveState targetHiveState = HiveState.UNKNOWN;
     private int selectedTagId = -1;
     private List<Integer> visibleTagIds = Collections.emptyList();
+    private List<Integer> detectedTagIds = Collections.emptyList();
+    private Map<Integer, String> tagPoseAgreement = Collections.emptyMap();
     private Map<Integer, Double> visibleTagHeightsInches = Collections.emptyMap();
     private Map<Integer, Pose3D> visibleTagPosesRobotSpace = Collections.emptyMap();
     private Map<CellCluster, HiveState> observedClusterStates = Collections.emptyMap();
 
     public Vision(HardwareMap hardwareMap, Alliance alliance) {
+        this(hardwareMap, alliance, LocalizationMode.MULTI_TAG);
+    }
+
+    public Vision(HardwareMap hardwareMap, Alliance alliance, LocalizationMode localizationMode) {
         this.alliance = alliance;
+        this.localizationMode = localizationMode;
         pipelineIndex = alliance == Alliance.BLUE
                 ? VisionConstants.bluePipelineIndex : VisionConstants.redPipelineIndex;
         limelight = hardwareMap.get(Limelight3A.class, VisionConstants.limelightName);
@@ -128,26 +144,39 @@ public class Vision extends SubsystemBase {
         averageTagArea = result.getBotposeAvgArea();
         double[] stddev = result.getStddevMt1();
         mt1StandardDeviations = stddev == null ? null : stddev.clone();
+        botposeTagCount = result.getBotposeTagCount();
+        Pose3D aggregatePose = result.getBotpose();
+        rawRobotFieldPose = localizationMode == LocalizationMode.MULTI_TAG ? aggregatePose : null;
         List<LLResultTypes.FiducialResult> fiducials = result.getFiducialResults();
         if (fiducials == null || fiducials.isEmpty()) {
             poseStatus = "No AprilTag detections";
             return;
         }
         List<Integer> ids = new ArrayList<>();
+        List<Integer> allIds = new ArrayList<>();
+        Map<Integer, String> agreement = new LinkedHashMap<>();
         Map<Integer, Double> heights = new LinkedHashMap<>();
         Map<Integer, Pose3D> poses = new LinkedHashMap<>();
-        boolean foreignAllianceTag = false;
         double representativeArea = -1.0;
         for (LLResultTypes.FiducialResult fiducial : fiducials) {
+            if (fiducial == null) {
+                allIds.add(null);
+                continue;
+            }
             int id = fiducial.getFiducialId();
+            allIds.add(id);
+            double[] difference = VisionMath.fieldPoseDifference(
+                    aggregatePose, fiducial.getRobotPoseFieldSpace());
+            agreement.put(id, difference == null ? "UNAVAILABLE"
+                    : String.format(Locale.US, "%.2f in / %+.2f deg", difference[0], difference[1]));
             Optional<CellCluster> cluster = CellCluster.forTagId(id);
             if (!cluster.isPresent()) {
                 continue;
             }
             if (!cluster.get().isForAlliance(alliance)) {
-                foreignAllianceTag = true;
                 continue;
             }
+            if (ids.contains(id)) continue;
             ids.add(id);
             Pose3D pose = fiducial.getTargetPoseRobotSpace();
             Optional<Position> position =
@@ -168,24 +197,44 @@ public class Vision extends SubsystemBase {
             }
         }
         visibleTagIds = Collections.unmodifiableList(ids);
+        detectedTagIds = Collections.unmodifiableList(allIds);
+        tagPoseAgreement = Collections.unmodifiableMap(agreement);
         visibleTagHeightsInches = Collections.unmodifiableMap(heights);
         visibleTagPosesRobotSpace = Collections.unmodifiableMap(poses);
-        if (foreignAllianceTag) {
-            poseStatus = "Rejected mixed-alliance HIVE tags";
-            return;
-        }
-        botposeTagCount = result.getBotposeTagCount();
-        rawRobotFieldPose = result.getBotpose();
-        if (botposeTagCount < VisionConstants.minimumBotposeTagCount) {
-            poseStatus = "Need at least " + VisionConstants.minimumBotposeTagCount
-                    + " MT1 localization tags; got " + botposeTagCount;
-            return;
-        }
-        if (usableTagCount < VisionConstants.minimumBotposeTagCount) {
-            poseStatus = "Need at least " + VisionConstants.minimumBotposeTagCount
-                    + " alliance tags with area >= " + VisionConstants.minimumTargetArea
-                    + "%; got " + usableTagCount;
-            return;
+        if (localizationMode == LocalizationMode.SINGLE_TAG) {
+            CellCluster requestedCell = aimCellSelection.getLatched() != null
+                    ? aimCellSelection.getLatched() : preferredSingleTagCell;
+            SingleTagLocalization.Selection source = SingleTagLocalization.select(
+                    result, alliance, requestedCell, VisionConstants.minimumTargetArea);
+            expectedCalibrationTagId = source.expectedId;
+            // Even if other tags are visible, only this fiducial's t6r_fs is used.
+            rawRobotFieldPose = source.pose();
+            if (source.tag == null) {
+                poseStatus = source.status;
+                return;
+            }
+            calibrationTagId = source.tag.getFiducialId();
+            selectedTagId = calibrationTagId;
+            representativeTagPoseRobotSpace = source.tag.getTargetPoseRobotSpace();
+            localizationTagCount = 1;
+        } else {
+            String tagRejection = VisionMath.localizationTagRejection(allIds, alliance, botposeTagCount);
+            if (tagRejection != null) {
+                poseStatus = "Rejected: " + tagRejection;
+                return;
+            }
+            if (botposeTagCount < VisionConstants.minimumBotposeTagCount) {
+                poseStatus = "Need at least " + VisionConstants.minimumBotposeTagCount
+                        + " MT1 localization tags; got " + botposeTagCount;
+                return;
+            }
+            if (usableTagCount < VisionConstants.minimumBotposeTagCount) {
+                poseStatus = "Need at least " + VisionConstants.minimumBotposeTagCount
+                        + " alliance tags with area >= " + VisionConstants.minimumTargetArea
+                        + "%; got " + usableTagCount;
+                return;
+            }
+            localizationTagCount = botposeTagCount;
         }
         hiveSolveResult = VisionMath.solveHiveFlatPose(
                 rawRobotFieldPose, VisionConstants.hivePivotHeightInches,
@@ -211,7 +260,9 @@ public class Vision extends SubsystemBase {
             }
         }
         observedClusterStates = Collections.unmodifiableMap(states);
-        poseStatus = "Corrected MT1 field pose ready";
+        poseStatus = localizationMode == LocalizationMode.SINGLE_TAG
+                ? "Corrected single Tag " + calibrationTagId + " pose ready"
+                : "Corrected MT1 field pose ready";
     }
 
     public void updateFieldTarget(Drive drive, boolean correctFromVision) {
@@ -238,7 +289,8 @@ public class Vision extends SubsystemBase {
             return;
         }
         if (!drive.isFieldPoseInitialized()) {
-            targetStatus = "Field pose not initialized; wait for corrected MT1 pose";
+            preferredSingleTagCell = null;
+            targetStatus = "Field pose not initialized; wait for corrected vision pose";
             return;
         }
         if (drive.getPinpointStatus() != GoBildaPinpointDriver.DeviceStatus.READY) {
@@ -246,8 +298,9 @@ public class Vision extends SubsystemBase {
             return;
         }
         Pose2D robotPose = drive.getPose();
-        selectedCluster = CellCluster.forFieldX(alliance, robotPose.getX(DistanceUnit.INCH))
-                .orElse(null);
+        selectedCluster = aimCellSelection.select(
+                CellCluster.forFieldX(alliance, robotPose.getX(DistanceUnit.INCH)).orElse(null));
+        preferredSingleTagCell = selectedCluster;
         double[] target = getFieldTarget(selectedCluster);
         if (target == null) {
             targetStatus = "CELL field coordinates missing";
@@ -264,9 +317,12 @@ public class Vision extends SubsystemBase {
                 robotPose, targetXInches, targetYInches, VisionConstants.shooterYawDegrees);
         validAimingTarget = Double.isFinite(yawErrorDegrees)
                 && Double.isFinite(targetHorizontalDistanceInches);
+        if (validAimingTarget) aimCellSelection.confirm(selectedCluster);
         targetHiveState = observedClusterStates.getOrDefault(selectedCluster, HiveState.UNKNOWN);
         validShootingTarget = validAimingTarget && correctedPoseAccepted
-                && targetHiveState == HiveState.HIGH;
+                && targetHiveState == HiveState.HIGH
+                && (localizationMode != LocalizationMode.SINGLE_TAG
+                    || calibrationTagId == SingleTagLocalization.tagIdFor(selectedCluster));
         targetStatus = validAimingTarget ? "Coordinate aim ready from Pinpoint" : "Invalid aim geometry";
     }
 
@@ -282,6 +338,10 @@ public class Vision extends SubsystemBase {
 
     public String getTargetStatus() { return targetStatus; }
     public String getPoseStatus() { return poseStatus; }
+    public LocalizationMode getLocalizationMode() { return localizationMode; }
+    public int getExpectedCalibrationTagId() { return expectedCalibrationTagId; }
+    public int getCalibrationTagId() { return calibrationTagId; }
+    public int getLocalizationTagCount() { return localizationTagCount; }
     public int getExpectedPipelineIndex() { return pipelineIndex; }
     public int getActualPipelineIndex() { return actualPipelineIndex; }
     public int getBotposeTagCount() { return botposeTagCount; }
@@ -320,6 +380,14 @@ public class Vision extends SubsystemBase {
     public int getSelectedTagId() { return selectedTagId; }
     public HiveState getTargetHiveState() { return targetHiveState; }
     public List<Integer> getVisibleTagIds() { return visibleTagIds; }
+    public List<Integer> getDetectedTagIds() { return detectedTagIds; }
+    public Map<Integer, String> getTagPoseAgreement() { return tagPoseAgreement; }
+    public double getRawToCorrectedHeadingDeltaDegrees() {
+        return correctedRobotFieldPose == null || rawRobotFieldPose == null
+                || rawRobotFieldPose.getOrientation() == null ? Double.NaN
+                : Math.IEEEremainder(correctedRobotFieldPose.getHeading(AngleUnit.DEGREES)
+                    - rawRobotFieldPose.getOrientation().getYaw(AngleUnit.DEGREES), 360.0);
+    }
     public Map<Integer, Double> getVisibleTagHeightsInches() { return visibleTagHeightsInches; }
     public Map<Integer, Pose3D> getVisibleTagPosesRobotSpace() { return visibleTagPosesRobotSpace; }
     public Map<CellCluster, HiveState> getObservedClusterStates() { return observedClusterStates; }
@@ -332,7 +400,14 @@ public class Vision extends SubsystemBase {
         return Optional.ofNullable(representativeTagPoseRobotSpace);
     }
 
+    public void setAimSelectionHeld(boolean held) { aimCellSelection.setHeld(held); }
+    public Optional<CellCluster> getLatchedAimCluster() {
+        return Optional.ofNullable(aimCellSelection.getLatched());
+    }
+
     public void stop() {
+        preferredSingleTagCell = null;
+        aimCellSelection.setHeld(false);
         limelight.stop();
         clearCurrentFrame();
         validAimingTarget = false;
@@ -346,6 +421,11 @@ public class Vision extends SubsystemBase {
         correctedRobotFieldPose = null;
         frameTimestamp = Double.NaN;
         botposeTagCount = 0;
+        localizationTagCount = 0;
+        calibrationTagId = -1;
+        expectedCalibrationTagId = localizationMode == LocalizationMode.SINGLE_TAG
+                ? SingleTagLocalization.tagIdFor(aimCellSelection.getLatched() != null
+                    ? aimCellSelection.getLatched() : preferredSingleTagCell) : -1;
         usableTagCount = 0;
         actualPipelineIndex = -1;
         resultAgeMs = -1;
@@ -363,6 +443,8 @@ public class Vision extends SubsystemBase {
         representativeTagPoseRobotSpace = null;
         selectedTagId = -1;
         visibleTagIds = Collections.emptyList();
+        detectedTagIds = Collections.emptyList();
+        tagPoseAgreement = Collections.emptyMap();
         visibleTagHeightsInches = Collections.emptyMap();
         visibleTagPosesRobotSpace = Collections.emptyMap();
         observedClusterStates = Collections.emptyMap();
