@@ -6,7 +6,6 @@ import com.arcrobotics.ftclib.command.CommandOpMode;
 import com.arcrobotics.ftclib.command.button.Trigger;
 import com.arcrobotics.ftclib.gamepad.GamepadEx;
 import com.arcrobotics.ftclib.gamepad.GamepadKeys;
-import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import org.firstinspires.ftc.teamcode.commands.*;
 import org.firstinspires.ftc.teamcode.subsystems.drive.*;
 import org.firstinspires.ftc.teamcode.subsystems.intake.Intake;
@@ -15,8 +14,7 @@ import org.firstinspires.ftc.teamcode.subsystems.transit.Transit;
 import org.firstinspires.ftc.teamcode.subsystems.vision.TagTxVision;
 
 /** Independent TeleOp. Current robot controls with the 12527-2 tx steering loop. */
-@TeleOp(name="Tag TX Aim", group="TeleOp")
-public class TagTxAim extends CommandOpMode {
+public abstract class TagTxAim extends CommandOpMode {
     private Drive drive;
     private Shooter shooter;
     private Intake intake;
@@ -26,13 +24,15 @@ public class TagTxAim extends CommandOpMode {
     private TagTxShootAssistCommand assist;
     private boolean started, stopLatched;
 
+    protected abstract TagTxVision.Alliance targetAlliance();
+
     @Override public void initialize() {
         started=false; stopLatched=false;
         drive=new Drive(hardwareMap);
         shooter=new Shooter(hardwareMap);
         intake=new Intake(hardwareMap);
         transit=new Transit(hardwareMap);
-        vision=new TagTxVision(hardwareMap);
+        vision=new TagTxVision(hardwareMap,targetAlliance());
         aim=new LegacyTxAimController();
         GamepadEx pad=new GamepadEx(gamepad1);
         assist=new TagTxShootAssistCommand(drive,shooter,intake,transit,vision,aim,pad);
@@ -55,11 +55,14 @@ public class TagTxAim extends CommandOpMode {
         showTelemetry();
     }
     private void showTelemetry() {
-        telemetry.addLine("Tag TX Aim | RT: aim/shoot | B: stop | L3: reset forward");
-        telemetry.addLine("Auto-select 31 / 35 / 39 / 43 by smallest absolute tx");
+        telemetry.addLine("Tag TX Aim " + targetAlliance().label + " | RT: aim/shoot | B: stop | L3: reset forward");
+        telemetry.addData("本程序阵营",targetAlliance().label);
+        telemetry.addData("当前可见阵营",vision.getVisibleAlliance());
+        telemetry.addData("当前瞄准阵营",vision.getTargetAlliance());
+        telemetry.addData("允许 Tag（自动选最小偏角）",targetAlliance().tagIds);
         telemetry.addData("Mode", !started ? "INIT" : stopLatched ? "STOPPED" : assist.isActive() ? "TX AIM" : "MANUAL");
         telemetry.addData("Pipeline", TagTxVision.pipelineIndex);
-        telemetry.addLine("Camera pipeline ID filter must allow all four tags");
+        telemetry.addLine("Camera ID filter must allow: " + targetAlliance().tagIds);
         telemetry.addData("Target", vision.getStatus());
         telemetry.addData("Tag / raw tx", "%d / %.2f deg", vision.getTagId(),vision.getTx());
         telemetry.addData("Filtered / target tx", "%.2f / %.2f deg",aim.getFilteredTx(),aim.getTargetTx());
@@ -72,6 +75,9 @@ public class TagTxAim extends CommandOpMode {
         telemetry.addData("Pinpoint",drive.getPinpointStatus());
         telemetry.update();
         TelemetryPacket packet=new TelemetryPacket();
+        packet.put("txProgramAlliance",targetAlliance().label);
+        packet.put("txVisibleAlliance",vision.getVisibleAlliance());
+        packet.put("txTargetAlliance",vision.getTargetAlliance());
         packet.put("txTag",vision.getTagId()); packet.put("txRaw",vision.getTx());
         packet.put("txFiltered",aim.getFilteredTx()); packet.put("txTarget",aim.getTargetTx());
         packet.put("txTurn",assist.getTurnPower()); packet.put("txAligned",aim.isLocked());

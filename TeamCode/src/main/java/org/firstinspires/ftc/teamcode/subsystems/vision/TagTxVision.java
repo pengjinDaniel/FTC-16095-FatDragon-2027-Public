@@ -14,6 +14,13 @@ import org.json.JSONObject;
 @Config
 public class TagTxVision extends SubsystemBase {
     public static int pipelineIndex = 0;
+    public enum Alliance {
+        ALL("红蓝自动", "31 / 35 / 39 / 43"), RED("红方", "31 / 35"), BLUE("蓝方", "39 / 43");
+        public final String label, tagIds;
+        Alliance(String label, String tagIds) { this.label=label; this.tagIds=tagIds; }
+    }
+    private Alliance alliance = Alliance.ALL;
+    private boolean redVisible, blueVisible;
     private final Limelight3A camera;
     private int appliedPipeline = -1;
     private double lastTimestamp = Double.NaN;
@@ -22,13 +29,17 @@ public class TagTxVision extends SubsystemBase {
     private String status = "Waiting for Tag 31 / 35 / 39 / 43";
 
     public TagTxVision(HardwareMap hardwareMap) {
+        this(hardwareMap, Alliance.ALL);
+    }
+    public TagTxVision(HardwareMap hardwareMap, Alliance alliance) {
+        this.alliance = alliance;
         camera = hardwareMap.get(Limelight3A.class, VisionConstants.limelightName);
         camera.setPollRateHz(VisionConstants.pollRateHz);
         camera.start();
     }
     @Override public void periodic() { update(); }
     public void update() {
-        observation = null;
+        observation = null; redVisible = false; blueVisible = false;
         if (pipelineIndex < 0 || pipelineIndex > 9) { status = "Invalid pipeline"; return; }
         if (appliedPipeline != pipelineIndex) {
             if (!camera.pipelineSwitch(pipelineIndex)) { status = "Pipeline switch failed"; return; }
@@ -39,7 +50,7 @@ public class TagTxVision extends SubsystemBase {
     }
     // Package visibility enables recorded-frame tests without hardware access.
     void acceptFrame(LLResult result, boolean connected, long now) {
-        observation = null;
+        observation = null; redVisible = false; blueVisible = false;
         status = "No usable Tag 31 / 35 / 39 / 43";
         if (!connected || result == null || !result.isValid()) return;
         if (result.getPipelineIndex() != pipelineIndex) { status = "Waiting for correct pipeline"; return; }
@@ -52,13 +63,20 @@ public class TagTxVision extends SubsystemBase {
         if ((now - lastFrameNanos) / 1_000_000L > VisionConstants.maxResultAgeMs) {
             status = "Frozen camera frame"; return;
         }
-        observation = select(result);
-        if (observation != null) status = "TX aim: Tag " + observation.id;
+        Observation red = select(result, Alliance.RED), blue = select(result, Alliance.BLUE);
+        redVisible = red != null; blueVisible = blue != null;
+        observation = getAlliance() == Alliance.RED ? red : getAlliance() == Alliance.BLUE ? blue : select(result);
+        status = observation == null ? "未看到可用的" + getAlliance().label + "目标"
+                : allianceOf(observation.id).label + " Tag " + observation.id;
     }
     public static boolean allowed(int id) { return id == 31 || id == 35 || id == 39 || id == 43; }
 
-    /** Every frame: closest to the crosshair wins, regardless of area/list order/alliance. */
-    public static Observation select(LLResult result) {
+    public static Alliance allianceOf(int id) {
+        return id == 31 || id == 35 ? Alliance.RED : id == 39 || id == 43 ? Alliance.BLUE : null;
+    }
+    /** Every frame: smallest absolute tx within this program's alliance wins. */
+    public static Observation select(LLResult result) { return select(result, Alliance.ALL); }
+    public static Observation select(LLResult result, Alliance alliance) {
         if (result == null || !result.isValid() || result.getFiducialResults() == null) return null;
         try {
             JSONArray rawTags = new JSONObject(result.toString()).optJSONArray("Fiducial");
@@ -66,6 +84,7 @@ public class TagTxVision extends SubsystemBase {
             Observation best = null;
             for (FiducialResult tag : result.getFiducialResults()) {
                 if (tag == null || !allowed(tag.getFiducialId())) continue;
+                if (alliance != Alliance.ALL && allianceOf(tag.getFiducialId()) != alliance) continue;
                 int id = tag.getFiducialId(), count = 0;
                 JSONObject raw = null;
                 for (int i = 0; i < rawTags.length(); i++) {
@@ -123,6 +142,11 @@ public class TagTxVision extends SubsystemBase {
     public double getTx() { return observation == null ? Double.NaN : observation.tx; }
     public double getDistance() { return observation == null ? Double.NaN : observation.distanceInches; }
     public HiveState getTargetHiveState() { return observation == null ? HiveState.UNKNOWN : observation.hive; }
+    public Alliance getAlliance() { return alliance == null ? Alliance.ALL : alliance; }
+    public String getVisibleAlliance() {
+        return redVisible && blueVisible ? "红方 + 蓝方" : redVisible ? "红方" : blueVisible ? "蓝方" : "无可用目标";
+    }
+    public String getTargetAlliance() { return observation == null ? "无" : allianceOf(observation.id).label; }
     public String getStatus() { return status; }
-    public void stop() { observation = null; camera.stop(); }
+    public void stop() { observation = null; redVisible = false; blueVisible = false; camera.stop(); }
 }

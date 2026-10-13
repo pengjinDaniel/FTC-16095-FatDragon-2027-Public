@@ -34,11 +34,25 @@ public class TagTxAimCheck {
         check(TagTxVision.select(frame(0,6,tag(31,3),tag(31,4)))==null,"duplicate selected ID rejected");
         JSONObject missing=tag(39,0); missing.remove("tx");
         check(TagTxVision.select(frame(0,7,missing))==null,"missing tx must not become aligned zero");
+        Frame mixed=frame(0,8,tag(31,10),tag(35,-3),tag(39,1),tag(43,-2));
+        check(TagTxVision.select(mixed,TagTxVision.Alliance.RED).id==35,"red ignores closer blue");
+        check(TagTxVision.select(mixed,TagTxVision.Alliance.BLUE).id==39,"blue selects closest blue");
+        check(TagTxVision.select(frame(0,9,tag(31,0),tag(35,1)),TagTxVision.Alliance.BLUE)==null,"blue never falls back to red");
+        check(TagTxVision.select(frame(0,10,tag(39,0),tag(43,1)),TagTxVision.Alliance.RED)==null,"red never falls back to blue");
+        check(TagTxVision.select(frame(0,11,tag(39,4),tag(43,-1)),TagTxVision.Alliance.BLUE).id==43,"same-alliance live switch");
         Field u=Unsafe.class.getDeclaredField("theUnsafe"); u.setAccessible(true);
         TagTxVision vision=(TagTxVision)((Unsafe)u.get(null)).allocateInstance(TagTxVision.class);
+        Field mode=TagTxVision.class.getDeclaredField("alliance"); mode.setAccessible(true);
+        mode.set(vision,TagTxVision.Alliance.RED);
+        vision.acceptFrame(mixed,true,800_000_000L);
+        check(vision.getTagId()==35 && vision.getTargetAlliance().equals("红方"),"live red selection and output");
+        check(vision.getVisibleAlliance().equals("红方 + 蓝方"),"report both visible colors despite selection filter");
+        vision.acceptFrame(frame(0,12,tag(39,0)),true,900_000_000L);
+        check(!vision.hasValidAimingTarget() && vision.getVisibleAlliance().equals("蓝方"),"opponent visible but never aimed");
+        mode.set(vision,TagTxVision.Alliance.BLUE);
         Frame fresh=frame(0,100,tag(39,5));
         vision.acceptFrame(fresh,true,1_000_000_000L); check(vision.hasValidAimingTarget(),"fresh tx works without field position");
-        vision.acceptFrame(fresh,true,1_201_000_000L); check(!vision.hasValidAimingTarget(),"frozen physical frame stops aim");
+        vision.acceptFrame(fresh,true,1_201_000_000L); check(!vision.hasValidAimingTarget(),"frozen physical frame stops aim"); check(vision.getVisibleAlliance().equals("无可用目标"),"stale visibility cleared");
         vision.acceptFrame(frame(1,101,tag(39,5)),true,1_202_000_000L); check(!vision.hasValidAimingTarget(),"wrong pipeline rejected");
         vision.acceptFrame(frame(0,102,tag(39,5)),false,1_203_000_000L); check(!vision.hasValidAimingTarget(),"camera disconnect stops aim");
         double oldD=LegacyTxAimController.kD_alignH, oldAlpha=LegacyTxAimController.txFilterAlpha;
@@ -57,6 +71,6 @@ public class TagTxAimCheck {
             near(pid.getFilteredTx(),-10,"no old target blended into new tag");
             near(pid.calculateTurnPower(false,0,30,43),0,"lost target stops"); check(!pid.isLocked(),"lost target clears lock");
         } finally { LegacyTxAimController.kD_alignH=oldD; LegacyTxAimController.txFilterAlpha=oldAlpha; }
-        System.out.println("PASS: four tags; minimum absolute per-tag tx; immediate switching; poisoned global tx isolation; invalid/missing/duplicate tags; frozen/disconnected/wrong-pipeline rejection; old PID direction/distance/filter/deadband/hysteresis; target-switch reset and lost-target stop.");
+        System.out.println("PASS: alliance filtering, visible-color telemetry, no opponent fallback; four tags; minimum absolute per-tag tx; immediate switching; poisoned global tx isolation; invalid/missing/duplicate tags; frozen/disconnected/wrong-pipeline rejection; old PID direction/distance/filter/deadband/hysteresis; target-switch reset and lost-target stop.");
     }
 }
