@@ -148,8 +148,7 @@ public abstract class TeleOpBase extends CommandOpMode {
                 && Double.isFinite(pose.getX(DistanceUnit.INCH))
                 && Double.isFinite(pose.getY(DistanceUnit.INCH))
                 && Double.isFinite(pose.getHeading(AngleUnit.DEGREES));
-        CellCluster expected = located ? CellCluster.forFieldX(getAlliance(),
-                pose.getX(DistanceUnit.INCH)).orElse(null) : null;
+        CellCluster expected = located ? CellCluster.forFieldPose(getAlliance(), pose).orElse(null) : null;
         CellCluster selected = vision.getSelectedCluster().orElse(null);
         String target = cellLabel(expected);
         if (selected != null && selected != expected) {
@@ -169,7 +168,7 @@ public abstract class TeleOpBase extends CommandOpMode {
         boolean allowed = started && !stopLatched && aimRequested && shootAssistCommand.canFire();
         telemetry.addData("允许射击", allowed ? "是" : "否：" + shootingBlockReason());
         // The same fused Pinpoint field pose used for CELL selection and aiming.
-        telemetry.addData("机器人场地坐标", "X %.1f cm / Y %.1f cm / 朝向 %.1f°（%s）",
+        telemetry.addData("场地坐标（中心183/183cm）", "X %.1f cm / Y %.1f cm / 朝向 %.1f°（%s）",
                 pose.getX(DistanceUnit.CM),pose.getY(DistanceUnit.CM),pose.getHeading(AngleUnit.DEGREES),
                 located ? "已校准" : "未校准，尚非可靠场地坐标");
         telemetry.addData("校准", vision.getCalibrationStatus());

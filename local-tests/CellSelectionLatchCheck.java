@@ -6,16 +6,20 @@ public class CellSelectionLatchCheck {
     private static void check(boolean ok, String message) {
         if (!ok) throw new AssertionError(message);
     }
+    private static Pose2D fieldPose(double mapX) {
+        return FieldCoordinates.fromCenteredHiveMap(
+                new Pose2D(DistanceUnit.INCH,mapX,0,AngleUnit.DEGREES,0));
+    }
     private static double error(double x, CellCluster cell) {
         double[] target = VisionConstants.cellTargetFieldXYInches[cell.getTuningIndex()];
         return VisionMath.coordinateYawErrorDegrees(
-                new Pose2D(DistanceUnit.INCH, x, 0, AngleUnit.DEGREES, 0),
+                fieldPose(x),
                 target[0], target[1], VisionConstants.shooterYawDegrees);
     }
     public static void main(String[] args) {
         for (Alliance alliance : Alliance.values()) {
-            CellCluster left = CellCluster.forFieldX(alliance, -.01).get();
-            CellCluster right = CellCluster.forFieldX(alliance, .01).get();
+            CellCluster left = CellCluster.forFieldPose(alliance, fieldPose(-.01)).get();
+            CellCluster right = CellCluster.forFieldPose(alliance, fieldPose(.01)).get();
             CellSelectionLatch latch = new CellSelectionLatch();
             latch.setHeld(true);
             // A frame with invalid geometry must not capture a target.
@@ -28,7 +32,7 @@ public class CellSelectionLatchCheck {
             for (int i = 0; i < 200; i++) {
                 latch.setHeld(true);
                 double x = (i % 2 == 0) ? .01 : -.01;
-                CellCluster selected = latch.select(CellCluster.forFieldX(alliance, x).get());
+                CellCluster selected = latch.select(CellCluster.forFieldPose(alliance, fieldPose(x)).get());
                 check(selected == left, "centerline jitter must not switch CELL during RT");
                 check(Math.abs(error(x, selected) - initialError) < .1,
                         "0.5mm pose jitter must not cause the original 108 degree jump");

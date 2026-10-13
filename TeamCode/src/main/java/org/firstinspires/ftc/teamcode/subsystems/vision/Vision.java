@@ -218,7 +218,8 @@ public class Vision extends SubsystemBase {
         if (!hiveSolveSuccessful) {
             return;
         }
-        correctedRobotFieldPose = hiveSolveResult.correction.robotPose;
+        correctedRobotFieldPose = FieldCoordinates.fromCenteredHiveMap(
+                hiveSolveResult.correction.robotPose);
         hiveAngleDegrees = hiveSolveResult.correction.hiveAngleDegrees;
         robotLevelErrorDegrees = hiveSolveResult.correction.levelErrorDegrees;
         Map<CellCluster, HiveState> states = new EnumMap<>(CellCluster.class);
@@ -227,7 +228,7 @@ public class Vision extends SubsystemBase {
             if (cluster.isForAlliance(alliance) && target != null) {
                 HiveState state = Math.abs(hiveAngleDegrees)
                         <= VisionConstants.highHiveTiltThresholdDegrees ? HiveState.MIDDLE
-                        : -Math.sin(Math.toRadians(hiveAngleDegrees)) * target[0] > 0.0
+                        : -Math.sin(Math.toRadians(hiveAngleDegrees)) * FieldCoordinates.audienceOffsetInches(target[1]) > 0.0
                         ? HiveState.HIGH : HiveState.LOW;
                 states.put(cluster, state);
             }
@@ -261,7 +262,7 @@ public class Vision extends SubsystemBase {
         }
         Pose2D robotPose = drive.getPose();
         selectedCluster = aimCellSelection.select(
-                CellCluster.forFieldX(alliance, robotPose.getX(DistanceUnit.INCH)).orElse(null));
+                CellCluster.forFieldPose(alliance, robotPose).orElse(null));
         double[] target = getFieldTarget(selectedCluster);
         if (target == null) {
             targetStatus = "CELL field coordinates missing";
