@@ -168,9 +168,10 @@ public abstract class TeleOpBase extends CommandOpMode {
         telemetry.addData("瞄准", aimState);
         boolean allowed = started && !stopLatched && aimRequested && shootAssistCommand.canFire();
         telemetry.addData("允许射击", allowed ? "是" : "否：" + shootingBlockReason());
-        telemetry.addData("当前位置" + (located ? "" : "（未校准）"),
-                "X %.1f cm / Y %.1f cm / 朝向 %.1f°",
-                pose.getX(DistanceUnit.CM),pose.getY(DistanceUnit.CM),pose.getHeading(AngleUnit.DEGREES));
+        // The same fused Pinpoint field pose used for CELL selection and aiming.
+        telemetry.addData("机器人场地坐标", "X %.1f cm / Y %.1f cm / 朝向 %.1f°（%s）",
+                pose.getX(DistanceUnit.CM),pose.getY(DistanceUnit.CM),pose.getHeading(AngleUnit.DEGREES),
+                located ? "已校准" : "未校准，尚非可靠场地坐标");
         telemetry.addData("校准", vision.getCalibrationStatus());
         telemetry.update();
     }
