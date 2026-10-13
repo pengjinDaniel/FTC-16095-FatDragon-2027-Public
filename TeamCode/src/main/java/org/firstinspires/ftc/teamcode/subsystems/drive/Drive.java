@@ -152,6 +152,20 @@ public class Drive extends SubsystemBase {
         return fieldPoseInitialized;
     }
 
+    /** Read-only confidence check; never writes Pinpoint, including while R2 is held. */
+    public boolean isVisionPoseWithinGate(Pose2D pose) {
+        Pose2D predicted = getPose();
+        return isFinitePose(pose) && isFinitePose(predicted)
+                && Double.isFinite(DriveConstants.maximumVisionPositionDifferenceInches)
+                && Double.isFinite(DriveConstants.maximumVisionHeadingDifferenceDegrees)
+                && Math.hypot(pose.getX(DistanceUnit.INCH)-predicted.getX(DistanceUnit.INCH),
+                    pose.getY(DistanceUnit.INCH)-predicted.getY(DistanceUnit.INCH))
+                    <= DriveConstants.maximumVisionPositionDifferenceInches
+                && Math.abs(Math.IEEEremainder(pose.getHeading(AngleUnit.DEGREES)
+                    -predicted.getHeading(AngleUnit.DEGREES),360.0))
+                    <= DriveConstants.maximumVisionHeadingDifferenceDegrees;
+    }
+
     private static boolean isFinitePose(Pose2D pose) {
         return pose != null
                 && Double.isFinite(pose.getX(DistanceUnit.INCH))

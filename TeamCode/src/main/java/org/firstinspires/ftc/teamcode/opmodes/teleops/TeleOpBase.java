@@ -85,7 +85,7 @@ public abstract class TeleOpBase extends CommandOpMode {
 
         // The scheduler refreshes sensors before buttons and command execution.
         CommandScheduler.getInstance().addButton(() -> vision.updateFieldTarget(
-                drive, aimRequested));
+                drive, !aimRequested));
 
         new Trigger(
                 () -> gamepadEx.getButton(GamepadKeys.Button.LEFT_STICK_BUTTON)
@@ -129,7 +129,7 @@ public abstract class TeleOpBase extends CommandOpMode {
             stopMechanisms();
             drive.periodic();
             vision.update();
-            vision.updateFieldTarget(drive, false);
+            vision.updateFieldTarget(drive, !aimRequested);
         } else {
             super.run();
         }
@@ -154,12 +154,10 @@ public abstract class TeleOpBase extends CommandOpMode {
         telemetry.addData("Alliance", vision.getAlliance());
         telemetry.addData("Target Status", vision.getTargetStatus());
         telemetry.addData("Vision Pose Status", vision.getPoseStatus());
-        telemetry.addData("Localization Mode", vision.getLocalizationMode());
+        telemetry.addData("位置校准",vision.getCalibrationStatus());
+        telemetry.addData("稳定采样", "%d / 3",vision.getCalibrationStableSamples());
+        telemetry.addData("校准规则", "松开R2：成功后间隔150ms，失败持续尝试；按住R2暂停");
         telemetry.addData("Calibration Tags Used", vision.getLocalizationTagCount());
-        if (vision.getLocalizationMode() == Vision.LocalizationMode.SINGLE_TAG) {
-            telemetry.addData("Single Tag expected / used", "%d / %d",
-                    vision.getExpectedCalibrationTagId(), vision.getCalibrationTagId());
-        }
         telemetry.addData("Pipeline expected/actual", "%d / %d",
                 vision.getExpectedPipelineIndex(), vision.getActualPipelineIndex());
         telemetry.addData("MT1 Tag Count / Age (ms)", "%d / %d",
@@ -290,10 +288,9 @@ public abstract class TeleOpBase extends CommandOpMode {
         packet.put("timeToLockSec", timeToLockSeconds);
         packet.put("validAimTarget", vision.hasValidAimingTarget());
         packet.put("visionCorrectionApplied", vision.wasCorrectionApplied());
-        packet.put("localizationMode", vision.getLocalizationMode().name());
+        packet.put("visionCalibration", vision.getCalibrationStatus());
+        packet.put("visionStableSamples", vision.getCalibrationStableSamples());
         packet.put("localizationTagCount", vision.getLocalizationTagCount());
-        packet.put("expectedCalibrationTagId", vision.getExpectedCalibrationTagId());
-        packet.put("calibrationTagId", vision.getCalibrationTagId());
         packet.put("detectedTagIds", vision.getDetectedTagIds().toString());
         packet.put("mt1TagCount", vision.getBotposeTagCount());
         packet.put("qualifiedTagCount", vision.getUsableTagCount());
@@ -359,7 +356,7 @@ public abstract class TeleOpBase extends CommandOpMode {
             while (opModeInInit() && !isStopRequested()) {
                 drive.periodic();
                 vision.update();
-                vision.updateFieldTarget(drive, true);
+                vision.updateFieldTarget(drive, gamepad1.right_trigger <= TeleOpConstants.triggerThreshold);
                 showTelemetry();
                 idle();
             }

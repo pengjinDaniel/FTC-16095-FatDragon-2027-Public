@@ -285,7 +285,7 @@ def main():
         return
     install_apk(serial, digest)
     print('\n上传完成。回到控制手机查看程序列表。没有启动任何机器人程序。')
-    print('程序入口：Blue / Red，或 Blue Single Tag / Red Single Tag。')
+    print('程序入口：Blue / Red。松开 R2：校准成功后等 150ms，失败持续尝试；按住 R2 暂停校准。')
 
 
 if __name__ == '__main__':
