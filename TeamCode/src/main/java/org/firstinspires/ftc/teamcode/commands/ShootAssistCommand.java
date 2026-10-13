@@ -208,7 +208,7 @@ public class ShootAssistCommand extends CommandBase {
                 && !manualTranslation
                 && validShootingTarget
                 && vision.getTargetHiveState() == HiveState.HIGH
-                && shooter.isReady()
+                // && shooter.isReady() // 用户要求：暂时不以达速状态限制射击。
                 && shooter.isPitchReady()
                 && autoAim.isLocked()
                 && transit.areLimitPositionsCalibrated();

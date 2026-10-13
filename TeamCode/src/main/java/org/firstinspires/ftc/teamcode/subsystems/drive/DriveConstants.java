@@ -44,7 +44,7 @@ public class DriveConstants {
     public static volatile double autoAimKd = -0.19;
     // Keep F at zero because the heading controller uses a zero setpoint.
     public static volatile double autoAimKf = 0.0;
-    public static volatile double autoAimYawToTurnSign = 1.0;
+    public static volatile double autoAimYawToTurnSign = -1.0;
     public static volatile double autoAimMaxTurnPower = 1;
     public static volatile double autoAimTestMaxTurnPower = 1;
     public static volatile double aimLockToleranceDegrees = 1.5;

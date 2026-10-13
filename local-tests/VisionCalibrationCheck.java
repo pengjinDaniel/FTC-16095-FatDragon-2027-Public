@@ -82,6 +82,22 @@ public class VisionCalibrationCheck {
         vision.updateFieldTarget(drive,false);
         check(vision.hasValidAimingTarget() && vision.hasValidShootingTarget(),"full aim/shoot remains usable on trusted HIGH while R2 held");
         check(drive.writes==2,"geometry/feed check never recalibrates held R2");
-        System.out.println("PASS: three fresh consistent frames, success-only150ms cooldown, continuous failed-write retry, R2 inhibits every write, normal odometry motion, position/heading jumps, wrap, loss/gaps, confidence and production aiming/firing while held.");
+        // Verify production selection, including releasing and re-pressing R2 across halves.
+        for (Alliance alliance : Alliance.values()) {
+            set(vision,"alliance",alliance);
+            vision.setAimSelectionHeld(false);
+            drive.position=pose(-40,0); vision.updateFieldTarget(drive,false);
+            CellCluster left=CellCluster.forFieldX(alliance,-40).get();
+            CellCluster right=CellCluster.forFieldX(alliance,40).get();
+            check(vision.getSelectedCluster().get()==left,"negative half selects its own CELL");
+            vision.setAimSelectionHeld(true); vision.updateFieldTarget(drive,false);
+            drive.position=pose(40,0); vision.updateFieldTarget(drive,false);
+            check(vision.getSelectedCluster().get()==left,"held R2 intentionally preserves selected CELL");
+            vision.setAimSelectionHeld(false); vision.updateFieldTarget(drive,false);
+            check(vision.getSelectedCluster().get()==right,"release R2 on positive half selects other CELL");
+            vision.setAimSelectionHeld(true); vision.updateFieldTarget(drive,false);
+            check(vision.getSelectedCluster().get()==right,"re-press R2 retains newly selected half");
+        }
+        System.out.println("PASS: three fresh consistent frames, success-only150ms cooldown, continuous failed-write retry, R2 inhibits every write, normal odometry motion, position/heading jumps, wrap, loss/gaps, confidence and production aiming/firing while held; both alliances switch CELL after release across field halves.");
     }
 }
