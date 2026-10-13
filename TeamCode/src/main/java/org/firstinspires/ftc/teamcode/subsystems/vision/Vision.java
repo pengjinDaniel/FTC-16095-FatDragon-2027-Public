@@ -26,14 +26,10 @@ import java.util.Map;
 import java.util.Optional;
 
 public class Vision extends SubsystemBase {
-    public enum LocalizationMode { MULTI_TAG, SINGLE_TAG }
     private final Limelight3A limelight;
     private final Alliance alliance;
     private final int pipelineIndex;
-    private final LocalizationMode localizationMode;
-    private CellCluster preferredSingleTagCell;
-    private int expectedCalibrationTagId = -1;
-    private int calibrationTagId = -1;
+    private final VisionCalibrationFilter calibrationFilter = new VisionCalibrationFilter();
     private int localizationTagCount;
     private String poseStatus = "Waiting for AprilTags";
     private String targetStatus = "Field pose not initialized";
@@ -78,12 +74,7 @@ public class Vision extends SubsystemBase {
     private Map<CellCluster, HiveState> observedClusterStates = Collections.emptyMap();
 
     public Vision(HardwareMap hardwareMap, Alliance alliance) {
-        this(hardwareMap, alliance, LocalizationMode.MULTI_TAG);
-    }
-
-    public Vision(HardwareMap hardwareMap, Alliance alliance, LocalizationMode localizationMode) {
         this.alliance = alliance;
-        this.localizationMode = localizationMode;
         pipelineIndex = alliance == Alliance.BLUE
                 ? VisionConstants.bluePipelineIndex : VisionConstants.redPipelineIndex;
         limelight = hardwareMap.get(Limelight3A.class, VisionConstants.limelightName);
@@ -146,7 +137,7 @@ public class Vision extends SubsystemBase {
         mt1StandardDeviations = stddev == null ? null : stddev.clone();
         botposeTagCount = result.getBotposeTagCount();
         Pose3D aggregatePose = result.getBotpose();
-        rawRobotFieldPose = localizationMode == LocalizationMode.MULTI_TAG ? aggregatePose : null;
+        rawRobotFieldPose = aggregatePose;
         List<LLResultTypes.FiducialResult> fiducials = result.getFiducialResults();
         if (fiducials == null || fiducials.isEmpty()) {
             poseStatus = "No AprilTag detections";
@@ -201,41 +192,23 @@ public class Vision extends SubsystemBase {
         tagPoseAgreement = Collections.unmodifiableMap(agreement);
         visibleTagHeightsInches = Collections.unmodifiableMap(heights);
         visibleTagPosesRobotSpace = Collections.unmodifiableMap(poses);
-        if (localizationMode == LocalizationMode.SINGLE_TAG) {
-            CellCluster requestedCell = aimCellSelection.getLatched() != null
-                    ? aimCellSelection.getLatched() : preferredSingleTagCell;
-            SingleTagLocalization.Selection source = SingleTagLocalization.select(
-                    result, alliance, requestedCell, VisionConstants.minimumTargetArea);
-            expectedCalibrationTagId = source.expectedId;
-            // Even if other tags are visible, only this fiducial's t6r_fs is used.
-            rawRobotFieldPose = source.pose();
-            if (source.tag == null) {
-                poseStatus = source.status;
-                return;
-            }
-            calibrationTagId = source.tag.getFiducialId();
-            selectedTagId = calibrationTagId;
-            representativeTagPoseRobotSpace = source.tag.getTargetPoseRobotSpace();
-            localizationTagCount = 1;
-        } else {
-            String tagRejection = VisionMath.localizationTagRejection(allIds, alliance, botposeTagCount);
-            if (tagRejection != null) {
-                poseStatus = "Rejected: " + tagRejection;
-                return;
-            }
-            if (botposeTagCount < VisionConstants.minimumBotposeTagCount) {
-                poseStatus = "Need at least " + VisionConstants.minimumBotposeTagCount
-                        + " MT1 localization tags; got " + botposeTagCount;
-                return;
-            }
-            if (usableTagCount < VisionConstants.minimumBotposeTagCount) {
-                poseStatus = "Need at least " + VisionConstants.minimumBotposeTagCount
-                        + " alliance tags with area >= " + VisionConstants.minimumTargetArea
-                        + "%; got " + usableTagCount;
-                return;
-            }
-            localizationTagCount = botposeTagCount;
+        String tagRejection = VisionMath.localizationTagRejection(allIds, alliance, botposeTagCount);
+        if (tagRejection != null) {
+            poseStatus = "Rejected: " + tagRejection;
+            return;
         }
+        if (botposeTagCount < VisionConstants.minimumBotposeTagCount) {
+            poseStatus = "Need at least " + VisionConstants.minimumBotposeTagCount
+                    + " MT1 localization tags; got " + botposeTagCount;
+            return;
+        }
+        if (usableTagCount < VisionConstants.minimumBotposeTagCount) {
+            poseStatus = "Need at least " + VisionConstants.minimumBotposeTagCount
+                    + " alliance tags with area >= " + VisionConstants.minimumTargetArea
+                    + "%; got " + usableTagCount;
+            return;
+        }
+        localizationTagCount = botposeTagCount;
         hiveSolveResult = VisionMath.solveHiveFlatPose(
                 rawRobotFieldPose, VisionConstants.hivePivotHeightInches,
                 VisionConstants.maximumHiveTiltDegrees, VisionConstants.robotLevelToleranceDegrees
@@ -260,21 +233,11 @@ public class Vision extends SubsystemBase {
             }
         }
         observedClusterStates = Collections.unmodifiableMap(states);
-        poseStatus = localizationMode == LocalizationMode.SINGLE_TAG
-                ? "Corrected single Tag " + calibrationTagId + " pose ready"
-                : "Corrected MT1 field pose ready";
+        poseStatus = "Corrected MT1 field pose ready";
     }
 
     public void updateFieldTarget(Drive drive, boolean correctFromVision) {
-        if (correctFromVision) {
-            if (correctedRobotFieldPose != null) {
-                correctionApplied |= drive.calibrateFieldPose(correctedRobotFieldPose, frameTimestamp);
-            } else {
-                drive.resetVisionRejectionSequence();
-            }
-        }
-        correctedPoseAccepted = correctedRobotFieldPose != null
-                && drive.hasAcceptedVisionFrame(frameTimestamp);
+        updateCalibration(drive, correctFromVision, System.nanoTime());
         validAimingTarget = false;
         validShootingTarget = false;
         selectedCluster = null;
@@ -289,7 +252,6 @@ public class Vision extends SubsystemBase {
             return;
         }
         if (!drive.isFieldPoseInitialized()) {
-            preferredSingleTagCell = null;
             targetStatus = "Field pose not initialized; wait for corrected vision pose";
             return;
         }
@@ -300,7 +262,6 @@ public class Vision extends SubsystemBase {
         Pose2D robotPose = drive.getPose();
         selectedCluster = aimCellSelection.select(
                 CellCluster.forFieldX(alliance, robotPose.getX(DistanceUnit.INCH)).orElse(null));
-        preferredSingleTagCell = selectedCluster;
         double[] target = getFieldTarget(selectedCluster);
         if (target == null) {
             targetStatus = "CELL field coordinates missing";
@@ -320,11 +281,35 @@ public class Vision extends SubsystemBase {
         if (validAimingTarget) aimCellSelection.confirm(selectedCluster);
         targetHiveState = observedClusterStates.getOrDefault(selectedCluster, HiveState.UNKNOWN);
         validShootingTarget = validAimingTarget && correctedPoseAccepted
-                && targetHiveState == HiveState.HIGH
-                && (localizationMode != LocalizationMode.SINGLE_TAG
-                    || calibrationTagId == SingleTagLocalization.tagIdFor(selectedCluster));
+                && targetHiveState == HiveState.HIGH;
         targetStatus = validAimingTarget ? "Coordinate aim ready from Pinpoint" : "Invalid aim geometry";
     }
+
+    // Separated from target geometry for deterministic tests with a simulated clock/drive.
+    void updateCalibration(Drive drive, boolean allowCorrection, long nowNanos) {
+        correctedPoseAccepted = false;
+        if (!DriveConstants.pinpointConfigurationConfirmed
+                || drive.getPinpointStatus() != GoBildaPinpointDriver.DeviceStatus.READY) {
+            calibrationFilter.clear("Pinpoint未就绪，暂停校准");
+            return;
+        }
+        Pose2D before = drive.getPose();
+        boolean due = calibrationFilter.update(correctedRobotFieldPose, before,
+                frameTimestamp, nowNanos, allowCorrection);
+        if (due) {
+            if (drive.calibrateFieldPose(correctedRobotFieldPose, frameTimestamp)) {
+                correctionApplied = true;
+                calibrationFilter.onApplied(before, drive.getPose(), nowNanos);
+            } else calibrationFilter.onWriteRejected();
+        }
+        // Trust and writing are separate: holding R2 must not disable the firing interlock
+        // merely because this frame was deliberately not written to Pinpoint.
+        correctedPoseAccepted = calibrationFilter.isTrusted()
+                && drive.isFieldPoseInitialized()
+                && drive.isVisionPoseWithinGate(correctedRobotFieldPose);
+    }
+    public String getCalibrationStatus() { return calibrationFilter.getStatus(); }
+    public int getCalibrationStableSamples() { return calibrationFilter.getSampleCount(); }
 
     private static double[] getFieldTarget(CellCluster cluster) {
         double[][] targets = VisionConstants.cellTargetFieldXYInches;
@@ -338,9 +323,6 @@ public class Vision extends SubsystemBase {
 
     public String getTargetStatus() { return targetStatus; }
     public String getPoseStatus() { return poseStatus; }
-    public LocalizationMode getLocalizationMode() { return localizationMode; }
-    public int getExpectedCalibrationTagId() { return expectedCalibrationTagId; }
-    public int getCalibrationTagId() { return calibrationTagId; }
     public int getLocalizationTagCount() { return localizationTagCount; }
     public int getExpectedPipelineIndex() { return pipelineIndex; }
     public int getActualPipelineIndex() { return actualPipelineIndex; }
@@ -406,7 +388,7 @@ public class Vision extends SubsystemBase {
     }
 
     public void stop() {
-        preferredSingleTagCell = null;
+        calibrationFilter.clear("Stopped");
         aimCellSelection.setHeld(false);
         limelight.stop();
         clearCurrentFrame();
@@ -422,10 +404,6 @@ public class Vision extends SubsystemBase {
         frameTimestamp = Double.NaN;
         botposeTagCount = 0;
         localizationTagCount = 0;
-        calibrationTagId = -1;
-        expectedCalibrationTagId = localizationMode == LocalizationMode.SINGLE_TAG
-                ? SingleTagLocalization.tagIdFor(aimCellSelection.getLatched() != null
-                    ? aimCellSelection.getLatched() : preferredSingleTagCell) : -1;
         usableTagCount = 0;
         actualPipelineIndex = -1;
         resultAgeMs = -1;

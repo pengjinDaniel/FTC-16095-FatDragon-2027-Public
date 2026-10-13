@@ -6,6 +6,9 @@ public class VisionConstants {
     public static int redPipelineIndex = 1;
     public static int pollRateHz = 50;
     public static long maxResultAgeMs = 200;
+    // Initial outlier thresholds; compare vision correction offsets, not normal robot motion.
+    public static double calibrationSampleSpreadInches = 6.0;
+    public static double calibrationSampleSpreadDegrees = 10.0;
     // Minimum individual AprilTag area as a percentage of the image (0-100).
     public static double minimumTargetArea = 0.01;
     public static int minimumBotposeTagCount = 2;
