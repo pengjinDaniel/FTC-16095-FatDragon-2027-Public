@@ -1,106 +1,172 @@
 package org.firstinspires.ftc.teamcode.subsystems.vision;
 
-import org.firstinspires.ftc.robotcore.external.navigation.*;
-import org.firstinspires.ftc.teamcode.subsystems.drive.Drive;
 import com.qualcomm.hardware.gobilda.GoBildaPinpointDriver;
 import java.lang.reflect.Field;
-import java.util.EnumMap;
+import java.util.Collections;
+import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
+import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
+import org.firstinspires.ftc.robotcore.external.navigation.Pose2D;
+import org.firstinspires.ftc.teamcode.subsystems.drive.Drive;
 import sun.misc.Unsafe;
 
-/** Real SDK poses, simulated clock and drive; no motors, camera, ADB or network. */
+/** Checks the October 9 calibration policy using the production Vision and Drive methods. */
 public class VisionCalibrationCheck {
-    static Pose2D pose(double x,double heading) { return new Pose2D(DistanceUnit.INCH,x,0,AngleUnit.DEGREES,heading); }
-    static void check(boolean ok,String message) { if(!ok) throw new AssertionError(message); }
-    static void set(Vision v,String name,Object value) throws Exception {
-        Field f=Vision.class.getDeclaredField(name); f.setAccessible(true); f.set(v,value);
-    }
-    public static class FakeDrive extends Drive {
-        Pose2D position; int attempts,writes; boolean initialized,writeSucceeds=true;
-        private FakeDrive() { super(null); }
-        @Override public Pose2D getPose() { return position; }
-        @Override public GoBildaPinpointDriver.DeviceStatus getPinpointStatus() { return GoBildaPinpointDriver.DeviceStatus.READY; }
-        @Override public boolean isFieldPoseInitialized() { return initialized; }
-        @Override public boolean calibrateFieldPose(Pose2D p,double ts) {
-            attempts++; if(!writeSucceeds) return false;
-            writes++; position=p; initialized=true; return true;
+    private static int checks;
+    private static final Unsafe ALLOCATOR = allocator();
+
+    private static Unsafe allocator() {
+        try {
+            Field field = Unsafe.class.getDeclaredField("theUnsafe");
+            field.setAccessible(true);
+            return (Unsafe) field.get(null);
+        } catch (ReflectiveOperationException error) {
+            throw new AssertionError(error);
         }
     }
-    static void frame(Vision vision,FakeDrive drive,double timestamp,long now,boolean allowed,double x) throws Exception {
-        set(vision,"correctedRobotFieldPose",pose(x,0)); set(vision,"frameTimestamp",timestamp);
-        vision.updateCalibration(drive,allowed,now);
+
+    private static void check(boolean condition, String message) {
+        checks++;
+        if (!condition) throw new AssertionError(message);
     }
+
+    private static void set(Object target, Class<?> owner, String name, Object value) throws Exception {
+        Field field = owner.getDeclaredField(name);
+        field.setAccessible(true);
+        field.set(target, value);
+    }
+
+    private static Pose2D pose(double x, double heading) {
+        return new Pose2D(DistanceUnit.INCH, x, 0, AngleUnit.DEGREES, heading);
+    }
+
+    public static class FakePinpoint extends GoBildaPinpointDriver {
+        Pose2D position;
+        DeviceStatus status;
+        int writes;
+
+        private FakePinpoint() { super(null, false); }
+        @Override public DeviceStatus getDeviceStatus() { return status; }
+        @Override public Pose2D getPosition() { return position; }
+        @Override public double getHeading(AngleUnit unit) { return position.getHeading(unit); }
+        @Override public void setPosition(Pose2D candidate) { position = candidate; writes++; }
+        @Override public void update() { }
+    }
+
+    private static class Samples {
+        final Vision vision;
+        final Drive drive;
+        final FakePinpoint pinpoint;
+        double timestamp;
+
+        Samples() throws Exception {
+            vision = (Vision) ALLOCATOR.allocateInstance(Vision.class);
+            drive = (Drive) ALLOCATOR.allocateInstance(Drive.class);
+            pinpoint = (FakePinpoint) ALLOCATOR.allocateInstance(FakePinpoint.class);
+            pinpoint.position = pose(0, 0);
+            pinpoint.status = GoBildaPinpointDriver.DeviceStatus.READY;
+            set(drive, Drive.class, "pinpoint", pinpoint);
+            set(drive, Drive.class, "driverHeadingReferenceRadians", Double.NaN);
+            set(drive, Drive.class, "lastVisionTimestamp", Double.NaN);
+            set(drive, Drive.class, "lastAcceptedVisionTimestamp", Double.NaN);
+            set(vision, Vision.class, "alliance", Alliance.BLUE);
+            set(vision, Vision.class, "observedClusterStates", Collections.emptyMap());
+        }
+
+        void frame(double x, double heading, boolean started, boolean stopped, boolean requested)
+                throws Exception {
+            set(vision, Vision.class, "correctedRobotFieldPose", pose(x, heading));
+            set(vision, Vision.class, "frameTimestamp", ++timestamp);
+            vision.updateAimTarget(drive, started, stopped, requested);
+        }
+
+        void missingFrame() throws Exception {
+            set(vision, Vision.class, "correctedRobotFieldPose", null);
+            set(vision, Vision.class, "frameTimestamp", Double.NaN);
+            vision.updateAimTarget(drive, true, false, true);
+        }
+    }
+
     public static void main(String[] args) throws Exception {
-        VisionCalibrationFilter f=new VisionCalibrationFilter(); Pose2D zero=pose(0,0), v=pose(4,0);
-        check(!f.update(v,zero,1,0,true),"first frame must not initialize alone");
-        check(!f.update(v,zero,1,10_000_000,true) && f.getSampleCount()==1,"duplicates are not samples");
-        check(!f.update(v,zero,2,20_000_000,true),"two frames still wait");
-        check(f.update(v,zero,3,40_000_000,true),"three stable frames permit first attempt immediately");
-        f.onWriteRejected();
-        check(f.update(v,zero,4,50_000_000,true),"failure retries next fresh frame without 150ms delay");
-        f.onApplied(zero,v,50_000_000);
-        check(!f.update(v,v,5,199_999_999,true),"149.999ms after SUCCESS still blocked");
-        check(f.update(v,v,6,200_000_000,true),"exactly150ms after SUCCESS allowed");
-        f.onApplied(v,v,200_000_000);
-        check(!f.update(v,v,7,350_000_000,false) && f.isTrusted(),"R2 held trusts vision but never writes");
-        check(f.update(v,v,8,351_000_000,true),"release R2 attempts immediately if success interval already elapsed");
-        check(!f.update(pose(30,0),v,9,360_000_000,true) && !f.isTrusted(),"large single position jump rejected");
-        check(!f.update(v,v,10,370_000_000,true),"after jump must rebuild stability");
-        check(!f.update(v,v,11,380_000_000,true),"two stable recovery frames insufficient");
-        check(f.update(v,v,12,390_000_000,true),"stable recovery retries without failure delay");
-        check(!f.update(pose(4,40),v,13,400_000_000,true),"heading jump rejected");
-        f=new VisionCalibrationFilter();
-        for(int i=0;i<3;i++) check(f.update(pose(100*i+4,30*i),pose(100*i,30*i),i+1,i*20_000_000L,true)==(i==2),"normal odometry translation/rotation is not a visual jump");
-        check(!f.update(null,zero,4,60_000_000,true) && !f.isTrusted(),"lost/invalid pose clears confidence");
-        check(!f.update(v,zero,5,70_000_000,true),"new sample after loss starts immediately");
-        f=new VisionCalibrationFilter();
-        check(!f.update(pose(0,179),zero,1,0,true),"wrap frame1");
-        check(!f.update(pose(0,-179),zero,2,20_000_000,true),"wrap frame2");
-        check(f.update(pose(0,180),zero,3,40_000_000,true),"heading wrap not jump");
-        check(!f.update(pose(0,180),zero,4,300_000_000,true),"long gap clears old stability");
-        Field uf=Unsafe.class.getDeclaredField("theUnsafe"); uf.setAccessible(true); Unsafe u=(Unsafe)uf.get(null);
-        Vision vision=(Vision)u.allocateInstance(Vision.class); FakeDrive drive=(FakeDrive)u.allocateInstance(FakeDrive.class);
-        drive.position=zero; drive.writeSucceeds=false;
-        check(drive.isVisionPoseWithinGate(pose(40,50)),"stable 1m/50deg relocalization is no longer rejected by old tight gates");
-        check(!drive.isVisionPoseWithinGate(pose(49,0)),"beyond enlarged position gate remains rejected");
-        check(!drive.isVisionPoseWithinGate(pose(0,61)),"beyond enlarged heading gate remains rejected");
-        set(vision,"calibrationFilter",new VisionCalibrationFilter());
-        for(int i=1;i<=3;i++) frame(vision,drive,i,i*20_000_000L,true,4);
-        check(drive.attempts==1 && drive.writes==0,"production wiring attempts stable frame, actual write fails");
-        drive.writeSucceeds=true; frame(vision,drive,4,80_000_000L,true,4);
-        check(drive.attempts==2 && drive.writes==1,"production retries failed write next frame");
-        frame(vision,drive,5,100_000_000L,true,4);
-        check(drive.writes==1,"production obeys successful-write cooldown");
-        frame(vision,drive,6,200_000_000L,false,4); frame(vision,drive,7,240_000_000L,false,4);
-        check(drive.writes==1 && vision.isCorrectedPoseAccepted(),"held R2 never writes but shooting confidence survives");
-        frame(vision,drive,8,250_000_000L,true,4);
-        check(drive.writes==2,"release R2 writes when ready");
-        // Full production target geometry/firing validity while corrections are paused.
-        set(vision,"alliance",Alliance.BLUE); set(vision,"aimCellSelection",new CellSelectionLatch());
-        EnumMap<CellCluster,HiveState> states=new EnumMap<>(CellCluster.class);
-        for(CellCluster cell:CellCluster.values()) states.put(cell,HiveState.HIGH);
-        set(vision,"observedClusterStates",states);
-        set(vision,"calibrationFilter",new VisionCalibrationFilter());
-        long now=System.nanoTime();
-        for(int i=0;i<3;i++) frame(vision,drive,100+i,now-20_000_000L+i*5_000_000L,false,4);
-        vision.updateFieldTarget(drive,false);
-        check(vision.hasValidAimingTarget() && vision.hasValidShootingTarget(),"full aim/shoot remains usable on trusted HIGH while R2 held");
-        check(drive.writes==2,"geometry/feed check never recalibrates held R2");
-        // Verify production selection, including releasing and re-pressing R2 across halves.
-        for (Alliance alliance : Alliance.values()) {
-            set(vision,"alliance",alliance);
-            vision.setAimSelectionHeld(false);
-            drive.position=FieldCoordinates.fromCenteredHiveMap(pose(-40,0)); vision.updateFieldTarget(drive,false);
-            CellCluster left=CellCluster.forFieldPose(alliance,FieldCoordinates.fromCenteredHiveMap(pose(-40,0))).get();
-            CellCluster right=CellCluster.forFieldPose(alliance,FieldCoordinates.fromCenteredHiveMap(pose(40,0))).get();
-            check(vision.getSelectedCluster().get()==left,"negative half selects its own CELL");
-            vision.setAimSelectionHeld(true); vision.updateFieldTarget(drive,false);
-            drive.position=FieldCoordinates.fromCenteredHiveMap(pose(40,0)); vision.updateFieldTarget(drive,false);
-            check(vision.getSelectedCluster().get()==left,"held R2 intentionally preserves selected CELL");
-            vision.setAimSelectionHeld(false); vision.updateFieldTarget(drive,false);
-            check(vision.getSelectedCluster().get()==right,"release R2 on positive half selects other CELL");
-            vision.setAimSelectionHeld(true); vision.updateFieldTarget(drive,false);
-            check(vision.getSelectedCluster().get()==right,"re-press R2 retains newly selected half");
+        for (boolean started : new boolean[]{false, true}) {
+            for (boolean stopped : new boolean[]{false, true}) {
+                for (boolean requested : new boolean[]{false, true}) {
+                    Samples sample = new Samples();
+                    sample.frame(4, 0, started, stopped, requested);
+                    boolean expected = !started || (!stopped && requested);
+                    check(sample.pinpoint.writes == (expected ? 1 : 0),
+                            "INIT always calibrates; after START a request is required and B blocks it");
+                    check(sample.vision.isCorrectedPoseAccepted() == expected,
+                            "visual acceptance follows the physical frame actually written");
+                }
+            }
         }
-        System.out.println("PASS: three fresh consistent frames, success-only150ms cooldown, continuous failed-write retry, R2 inhibits every write, normal odometry motion, position/heading jumps, wrap, loss/gaps, confidence and production aiming/firing while held; both alliances switch CELL after release across field halves.");
+
+        Samples normal = new Samples();
+        normal.frame(4, 0, false, false, false);
+        check(normal.pinpoint.writes == 1 && normal.drive.isFieldPoseInitialized(),
+                "the first usable frame initializes without a consecutive-frame prerequisite");
+        normal.frame(5, 0, true, false, false);
+        check(normal.pinpoint.writes == 1 && normal.vision.hasValidAimingTarget(),
+                "unrequested calibration leaves Pinpoint aiming active");
+        check(!normal.vision.isCorrectedPoseAccepted(), "an unwritten new frame is not accepted");
+        normal.frame(5, 0, true, false, true);
+        normal.frame(6, 0, true, false, true);
+        check(normal.pinpoint.writes == 3, "success adds no cooldown to the next requested fresh frame");
+        normal.vision.updateAimTarget(normal.drive, true, false, true);
+        check(normal.pinpoint.writes == 3 && normal.vision.isCorrectedPoseAccepted(),
+                "re-reading an accepted frame neither writes again nor loses its acceptance");
+
+        Samples jumps = new Samples();
+        jumps.frame(4, 0, false, false, false);
+        jumps.frame(30, 90, true, false, true);
+        check(jumps.pinpoint.writes == 1 && jumps.drive.getRejectedVisionFrameCount() == 1,
+                "the first out-of-gate frame is rejected");
+        jumps.vision.updateAimTarget(jumps.drive, true, false, true);
+        check(jumps.drive.getRejectedVisionFrameCount() == 1,
+                "one repeated physical frame cannot advance the override counter");
+        jumps.frame(30, 90, true, false, true);
+        check(jumps.pinpoint.writes == 1 && jumps.drive.getRejectedVisionFrameCount() == 2,
+                "the second fresh out-of-gate frame remains rejected");
+        jumps.frame(30, 90, true, false, true);
+        check(jumps.pinpoint.writes == 2 && jumps.drive.wasVisionCorrectionForced(),
+                "the third fresh out-of-gate frame restores the October 9 forced override");
+        check(jumps.drive.hasAcceptedVisionFrame(jumps.timestamp),
+                "the forced frame is tracked as the accepted frame");
+        jumps.frame(30, 90, true, false, true);
+        check(jumps.pinpoint.writes == 3 && !jumps.drive.wasVisionCorrectionForced(),
+                "the next in-gate frame writes normally and clears the forced flag");
+
+        Samples interrupted = new Samples();
+        interrupted.frame(4, 0, false, false, false);
+        interrupted.frame(30, 0, true, false, true);
+        interrupted.frame(30, 0, true, false, true);
+        interrupted.missingFrame();
+        check(interrupted.drive.getRejectedVisionFrameCount() == 0,
+                "missing corrected vision resets the rejection sequence");
+        check(interrupted.vision.hasValidAimingTarget(),
+                "losing AprilTags preserves coordinate aiming from initialized Pinpoint");
+        interrupted.frame(30, 0, true, false, true);
+        check(interrupted.pinpoint.writes == 1 && interrupted.drive.getRejectedVisionFrameCount() == 1,
+                "a new rejection sequence cannot inherit the earlier two rejected frames");
+
+        Samples boundary = new Samples();
+        boundary.frame(0, 0, false, false, false);
+        boundary.frame(12, 30, true, false, true);
+        check(boundary.pinpoint.writes == 2 && !boundary.drive.wasVisionCorrectionForced(),
+                "12 inches and 30 degrees are inclusive correction boundaries");
+
+        Samples wrapped = new Samples();
+        wrapped.frame(4, 179, false, false, false);
+        wrapped.frame(4, -179, true, false, true);
+        check(wrapped.pinpoint.writes == 2, "heading wrap is a two-degree difference");
+
+        Samples invalid = new Samples();
+        invalid.frame(Double.NaN, 0, false, false, false);
+        check(invalid.pinpoint.writes == 0 && !invalid.drive.isFieldPoseInitialized(),
+                "a nonfinite corrected pose cannot initialize localization");
+        invalid.frame(4, 0, false, false, false);
+        check(invalid.pinpoint.writes == 1, "the next valid frame can retry immediately");
+        System.out.println("PASS VisionCalibrationCheck: " + checks
+                + " production calibration, frame identity and override assertions");
     }
 }

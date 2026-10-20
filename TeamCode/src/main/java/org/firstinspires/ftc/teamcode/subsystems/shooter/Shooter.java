@@ -18,6 +18,9 @@ public class Shooter extends SubsystemBase {
     private double targetVelocity = Double.NaN;
     private boolean velocityControlActive;
     private boolean fixedPowerActive;
+    private double requestedFixedPower;
+    private double leftPidOutput;
+    private double rightPidOutput;
     private double stableLeftVelocity = Double.NaN;
     private double stableRightVelocity = Double.NaN;
     private boolean ready;
@@ -51,49 +54,73 @@ public class Shooter extends SubsystemBase {
 
         pitchServo.setPosition(pitchPosition);
         pitchChangedAtNanos = System.nanoTime();
-        idle();
+        stop();
     }
 
-    public boolean startFixedPower() {
-        if (!areFixedPowerValuesValid()) {
+    public boolean setFixedPower(double power) {
+        if (!Double.isFinite(power) || power < 0.0 || power > 1.0
+                || !isPowerLimitValid() || !Double.isFinite(pitchPosition)) {
+            stop();
             return false;
         }
-        if (!fixedPowerActive) {
+        if (power == 0.0) {
+            stop();
+            return true;
+        }
+        if (!fixedPowerActive || requestedFixedPower != power) {
             leftController.reset();
             rightController.reset();
             resetReadyState();
         }
+        requestedFixedPower = power;
         fixedPowerActive = true;
         velocityControlActive = false;
         targetVelocity = Double.NaN;
-        setPitchPosition(ShooterConstants.pitchStartPosition);
-        double power = Math.min(ShooterConstants.fixedPower, ShooterConstants.maxPower);
-        setPower(power, power);
+        leftPidOutput = 0.0;
+        rightPidOutput = 0.0;
+        double limitedPower = Math.min(power, ShooterConstants.maxPower);
+        setPower(limitedPower, limitedPower);
         return true;
     }
 
-    public boolean setTargetFromDistance(double distanceInches) {
-        if (!areVelocityControlValuesCalibrated()) {
+    public boolean setDistanceTarget(double distanceCm) {
+        if (!areDistanceShotValuesValid() || !Double.isFinite(distanceCm) || distanceCm < 0.0) {
+            stop();
             return false;
         }
-        double mappedVelocity = ShooterVelocityModel.getVelocityForDistance(
-                distanceInches,
-                ShooterConstants.distancePointsInches,
-                ShooterConstants.velocityPointsTicksPerSecond
-        );
-        double mappedPitch = ShooterVelocityModel.getPitchForDistance(
-                distanceInches,
-                ShooterConstants.distancePointsInches,
-                ShooterConstants.pitchPoints
-        );
-        if (!Double.isFinite(mappedVelocity) || mappedVelocity <= 0.0
-                || !Double.isFinite(mappedPitch)) {
-            return false;
-        }
-
-        setTargetVelocity(mappedVelocity);
-        setPitchPosition(mappedPitch);
+        // Clamp to the measured endpoints; do not extrapolate beyond either shot.
+        double fraction = Range.clip(
+                (distanceCm - ShooterConstants.centerDistanceCm)
+                        / (ShooterConstants.wallDistanceCm - ShooterConstants.centerDistanceCm),
+                0.0, 1.0);
+        double velocity = (1.0 - fraction) * ShooterConstants.centerVelocityTicksPerSecond
+                + fraction * ShooterConstants.wallVelocityTicksPerSecond;
+        double pitch = (1.0 - fraction) * ShooterConstants.centerPitchPosition
+                + fraction * ShooterConstants.wallPitchPosition;
+        setPitchPosition(pitch);
+        setTargetVelocity(velocity);
         return hasTargetVelocity();
+    }
+
+    public static boolean areDistanceShotValuesValid() {
+        return areVelocityControlValuesCalibrated()
+                && Double.isFinite(ShooterConstants.pitchMinPosition)
+                && Double.isFinite(ShooterConstants.pitchMaxPosition)
+                && ShooterConstants.pitchMinPosition >= 0.0
+                && ShooterConstants.pitchMaxPosition <= 1.0
+                && ShooterConstants.pitchMinPosition <= ShooterConstants.pitchMaxPosition
+                && isDistancePointValid(ShooterConstants.centerDistanceCm,
+                        ShooterConstants.centerVelocityTicksPerSecond, ShooterConstants.centerPitchPosition)
+                && isDistancePointValid(ShooterConstants.wallDistanceCm,
+                        ShooterConstants.wallVelocityTicksPerSecond, ShooterConstants.wallPitchPosition)
+                && ShooterConstants.centerDistanceCm != ShooterConstants.wallDistanceCm;
+    }
+
+    private static boolean isDistancePointValid(double distanceCm, double velocity, double pitch) {
+        return Double.isFinite(distanceCm) && distanceCm > 0.0
+                && Double.isFinite(velocity) && velocity > 0.0
+                && Double.isFinite(pitch) && pitch >= ShooterConstants.pitchMinPosition
+                && pitch <= ShooterConstants.pitchMaxPosition;
     }
 
     public double getPitchPosition() {
@@ -101,7 +128,8 @@ public class Shooter extends SubsystemBase {
     }
 
     public boolean isPitchReady() {
-        return (fixedPowerActive || hasTargetVelocity())
+        return Double.isFinite(pitchPosition)
+                && (fixedPowerActive || hasTargetVelocity())
                 && Double.isFinite(ShooterConstants.pitchSettleTimeSeconds)
                 && ShooterConstants.pitchSettleTimeSeconds >= 0.0
                 && (System.nanoTime() - pitchChangedAtNanos) / 1_000_000_000.0
@@ -112,6 +140,7 @@ public class Shooter extends SubsystemBase {
         if (!areVelocityControlValuesCalibrated()
                 || !Double.isFinite(velocityTicksPerSecond)
                 || velocityTicksPerSecond <= 0.0) {
+            stop();
             return;
         }
 
@@ -130,22 +159,15 @@ public class Shooter extends SubsystemBase {
     }
 
     public void idle() {
-        if (fixedPowerActive || velocityControlActive || ready || Double.isFinite(targetVelocity)) {
-            leftController.reset();
-            rightController.reset();
-        }
-
-        fixedPowerActive = false;
-        velocityControlActive = false;
-        targetVelocity = Double.NaN;
-        resetReadyState();
-        setPower(ShooterConstants.idlePower, ShooterConstants.idlePower);
+        setFixedPower(ShooterConstants.idlePower);
     }
 
     public void stop() {
         fixedPowerActive = false;
         velocityControlActive = false;
         targetVelocity = Double.NaN;
+        leftPidOutput = 0.0;
+        rightPidOutput = 0.0;
         resetReadyState();
         leftController.reset();
         rightController.reset();
@@ -156,12 +178,12 @@ public class Shooter extends SubsystemBase {
         return velocityControlActive && Double.isFinite(targetVelocity);
     }
 
-    public boolean isReady() {
-        return ready;
-    }
-
     public double getTargetVelocity() {
         return targetVelocity;
+    }
+
+    public boolean isReady() {
+        return ready;
     }
 
     public double getLeftVelocity() {
@@ -180,6 +202,14 @@ public class Shooter extends SubsystemBase {
         return rightShooter.getPower();
     }
 
+    public double getLeftPidOutput() {
+        return leftPidOutput;
+    }
+
+    public double getRightPidOutput() {
+        return rightPidOutput;
+    }
+
     public String getControlMode() {
         return fixedPowerActive ? "FIXED POWER" : velocityControlActive ? "PID" : "IDLE";
     }
@@ -187,19 +217,20 @@ public class Shooter extends SubsystemBase {
     @Override
     public void periodic() {
         if (fixedPowerActive) {
-            if (!areFixedPowerValuesValid()) {
+            if (!isPowerLimitValid() || !Double.isFinite(requestedFixedPower)
+                    || !Double.isFinite(pitchPosition)) {
                 stop();
                 return;
             }
-            setPitchPosition(ShooterConstants.pitchStartPosition);
-            double power = Math.min(ShooterConstants.fixedPower, ShooterConstants.maxPower);
+            double power = Math.min(requestedFixedPower, ShooterConstants.maxPower);
             setPower(power, power);
             updateFixedPowerReadyState(getLeftVelocity(), getRightVelocity());
             return;
         }
         if (!areVelocityControlValuesCalibrated()
-                || !velocityControlActive || !Double.isFinite(targetVelocity)) {
-            idle();
+                || !velocityControlActive || !Double.isFinite(targetVelocity)
+                || !Double.isFinite(pitchPosition)) {
+            stop();
             return;
         }
 
@@ -218,16 +249,18 @@ public class Shooter extends SubsystemBase {
 
         double leftVelocity = getLeftVelocity();
         double rightVelocity = getRightVelocity();
-        double leftOutput = Range.clip(
-                leftController.calculate(leftVelocity, targetVelocity),
-                0.0,
-                ShooterConstants.maxPower
-        );
-        double rightOutput = Range.clip(
-                rightController.calculate(rightVelocity, targetVelocity),
-                0.0,
-                ShooterConstants.maxPower
-        );
+        if (!Double.isFinite(leftVelocity) || !Double.isFinite(rightVelocity)) {
+            stop();
+            return;
+        }
+        leftPidOutput = leftController.calculate(leftVelocity, targetVelocity);
+        rightPidOutput = rightController.calculate(rightVelocity, targetVelocity);
+        if (!Double.isFinite(leftPidOutput) || !Double.isFinite(rightPidOutput)) {
+            stop();
+            return;
+        }
+        double leftOutput = Range.clip(leftPidOutput, 0.0, ShooterConstants.maxPower);
+        double rightOutput = Range.clip(rightPidOutput, 0.0, ShooterConstants.maxPower);
 
         setPower(leftOutput, rightOutput);
         updateReadyState(leftVelocity, rightVelocity);
@@ -293,16 +326,14 @@ public class Shooter extends SubsystemBase {
         stableRightVelocity = Double.NaN;
     }
 
-    private boolean areFixedPowerValuesValid() {
-        return Double.isFinite(ShooterConstants.fixedPower)
-                && ShooterConstants.fixedPower > 0.0 && ShooterConstants.fixedPower <= 1.0
-                && Double.isFinite(ShooterConstants.maxPower)
-                && ShooterConstants.maxPower > 0.0 && ShooterConstants.maxPower <= 1.0
-                && Double.isFinite(ShooterConstants.pitchStartPosition);
+    private static boolean isPowerLimitValid() {
+        return Double.isFinite(ShooterConstants.maxPower)
+                && ShooterConstants.maxPower > 0.0 && ShooterConstants.maxPower <= 1.0;
     }
 
-    private boolean areVelocityControlValuesCalibrated() {
+    private static boolean areVelocityControlValuesCalibrated() {
         return ShooterConstants.velocityControlCalibrated
+                && isPowerLimitValid()
                 && Double.isFinite(ShooterConstants.kP)
                 && Double.isFinite(ShooterConstants.kI)
                 && Double.isFinite(ShooterConstants.kD)
@@ -312,7 +343,7 @@ public class Shooter extends SubsystemBase {
                 && areReadyValuesValid();
     }
 
-    private boolean areReadyValuesValid() {
+    private static boolean areReadyValuesValid() {
         return Double.isFinite(ShooterConstants.readyEnterTolerance)
                 && ShooterConstants.readyEnterTolerance > 0.0
                 && ShooterConstants.readyEnterTolerance <= 1.0
@@ -330,7 +361,17 @@ public class Shooter extends SubsystemBase {
         rightShooter.setPower(rightPower);
     }
 
-    private void setPitchPosition(double position) {
+    public void setPitchPosition(double position) {
+        if (!Double.isFinite(position)
+                || !Double.isFinite(ShooterConstants.pitchMinPosition)
+                || !Double.isFinite(ShooterConstants.pitchMaxPosition)
+                || ShooterConstants.pitchMinPosition < 0.0
+                || ShooterConstants.pitchMaxPosition > 1.0
+                || ShooterConstants.pitchMinPosition > ShooterConstants.pitchMaxPosition) {
+            pitchPosition = Double.NaN;
+            stop();
+            return;
+        }
         double clippedPosition = Range.clip(position,
                 ShooterConstants.pitchMinPosition, ShooterConstants.pitchMaxPosition);
         if (Math.abs(clippedPosition - pitchSettleReferencePosition)

@@ -33,6 +33,7 @@ public class Intake extends SubsystemBase {
         leftFlowerServo = hardwareMap.get(Servo.class, IntakeConstants.leftFlowerServoName);
         rightFlowerServo = hardwareMap.get(Servo.class, IntakeConstants.rightFlowerServoName);
         intakeMotor.setDirection(IntakeConstants.intakeMotorDirection);
+        intakeMotor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
         stop();
         raiseFlower();
     }

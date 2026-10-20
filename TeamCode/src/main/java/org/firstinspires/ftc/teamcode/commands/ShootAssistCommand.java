@@ -3,9 +3,8 @@ package org.firstinspires.ftc.teamcode.commands;
 import com.arcrobotics.ftclib.command.CommandBase;
 import com.arcrobotics.ftclib.gamepad.GamepadEx;
 import com.arcrobotics.ftclib.gamepad.GamepadKeys;
-import com.qualcomm.robotcore.util.ElapsedTime;
-import com.qualcomm.robotcore.util.Range;
 
+import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 import org.firstinspires.ftc.teamcode.subsystems.drive.AutoAimController;
 import org.firstinspires.ftc.teamcode.subsystems.drive.Drive;
 import org.firstinspires.ftc.teamcode.subsystems.drive.DriveConstants;
@@ -13,8 +12,7 @@ import org.firstinspires.ftc.teamcode.subsystems.drive.PositionHoldController;
 import org.firstinspires.ftc.teamcode.subsystems.intake.Intake;
 import org.firstinspires.ftc.teamcode.subsystems.shooter.Shooter;
 import org.firstinspires.ftc.teamcode.subsystems.transit.Transit;
-import org.firstinspires.ftc.teamcode.subsystems.transit.TransitConstants;
-import org.firstinspires.ftc.teamcode.subsystems.vision.HiveState;
+import org.firstinspires.ftc.teamcode.subsystems.transit.Transit.FiringState;
 import org.firstinspires.ftc.teamcode.subsystems.vision.Vision;
 
 public class ShootAssistCommand extends CommandBase {
@@ -26,20 +24,10 @@ public class ShootAssistCommand extends CommandBase {
     private final AutoAimController autoAim;
     private final PositionHoldController positionHold = new PositionHoldController();
     private final GamepadEx gamepadEx;
-    private final ElapsedTime limitOpenTimer = new ElapsedTime();
+    private final boolean autoAimEnabled;
 
-    private boolean active;
     private boolean canPrepareToFire;
     private boolean manualTranslation;
-    private double turnPower;
-    private FiringState firingState = FiringState.IDLE;
-
-    public enum FiringState {
-        IDLE,
-        WAITING,
-        LIMIT_OPENING,
-        FEEDING
-    }
 
     public ShootAssistCommand(
             Drive drive,
@@ -50,6 +38,19 @@ public class ShootAssistCommand extends CommandBase {
             AutoAimController autoAim,
             GamepadEx gamepadEx
     ) {
+        this(drive, shooter, intake, transit, vision, autoAim, gamepadEx, true);
+    }
+
+    public ShootAssistCommand(
+            Drive drive,
+            Shooter shooter,
+            Intake intake,
+            Transit transit,
+            Vision vision,
+            AutoAimController autoAim,
+            GamepadEx gamepadEx,
+            boolean autoAimEnabled
+    ) {
         this.drive = drive;
         this.shooter = shooter;
         this.intake = intake;
@@ -57,18 +58,16 @@ public class ShootAssistCommand extends CommandBase {
         this.vision = vision;
         this.autoAim = autoAim;
         this.gamepadEx = gamepadEx;
+        this.autoAimEnabled = autoAimEnabled;
         addRequirements(drive, shooter, intake, transit);
     }
 
     @Override
     public void initialize() {
-        active = true;
-        shooter.idle();
-        transit.close();
+        shooter.stop();
         autoAim.reset();
         positionHold.reset();
         manualTranslation = false;
-        turnPower = 0.0;
         resetFiringSequence(FiringState.WAITING);
     }
 
@@ -77,7 +76,7 @@ public class ShootAssistCommand extends CommandBase {
         double forward = applyDeadband(gamepadEx.getLeftY());
         double strafe = applyDeadband(gamepadEx.getLeftX());
         manualTranslation = forward != 0.0 || strafe != 0.0;
-        if (manualTranslation) {
+        if (!autoAimEnabled || manualTranslation) {
             positionHold.reset();
         } else {
             positionHold.update(drive.getPose(), drive.getPinpointStatus(),
@@ -90,41 +89,27 @@ public class ShootAssistCommand extends CommandBase {
                 > org.firstinspires.ftc.teamcode.opmodes.teleops.TeleOpConstants.triggerThreshold;
         boolean jamRequested = gamepadEx.getButton(GamepadKeys.Button.LEFT_BUMPER);
         intake.updateInputs(intakeRequested, jamRequested);
-        if (jamRequested) {
-            transit.reverse();
-        } else {
-            transit.forward();
-        }
-
-        turnPower = updateShootRequest(jamRequested);
-        double maxTurnPower = getEffectiveMaxTurnPower();
-        turnPower = Range.clip(turnPower, -maxTurnPower, maxTurnPower);
-
-        if (manualTranslation) {
-            drive.moveFieldCentric(forward, strafe, turnPower);
-        } else {
+        double turnPower = updateShootRequest(jamRequested);
+        if (autoAimEnabled) {
             drive.moveRobot(forward, strafe, turnPower);
+        } else {
+            drive.moveFieldCentric(forward, strafe, applyDeadband(gamepadEx.getRightX()));
         }
     }
 
     @Override
     public void end(boolean interrupted) {
-        active = false;
         autoAim.reset();
         positionHold.reset();
         manualTranslation = false;
-        turnPower = 0.0;
         resetFiringSequence(FiringState.IDLE);
-        shooter.idle();
+        shooter.stop();
+        intake.suspend();
         drive.stop();
     }
 
-    public boolean isActive() {
-        return active;
-    }
-
     public boolean canFire() {
-        return firingState == FiringState.FEEDING;
+        return transit.getFiringState() == FiringState.FEEDING;
     }
 
     public boolean canPrepareToFire() {
@@ -132,117 +117,42 @@ public class ShootAssistCommand extends CommandBase {
     }
 
     public FiringState getFiringState() {
-        return firingState;
-    }
-
-    public boolean isPositionLocked() {
-        return positionHold.isLocked();
-    }
-
-    public double getPositionErrorInches() {
-        return positionHold.getPositionErrorInches();
+        return transit.getFiringState();
     }
 
     public boolean isManualTranslation() {
         return manualTranslation;
     }
 
-    public double getTurnPower() {
-        return turnPower;
-    }
-
-    public static double getEffectiveMaxTurnPower() {
-        double controllerLimit = DriveConstants.autoAimMaxTurnPower;
-        double testedLimit = DriveConstants.autoAimTestMaxTurnPower;
-        if (!Double.isFinite(controllerLimit) || !Double.isFinite(testedLimit)
-                || controllerLimit < 0.0 || testedLimit < 0.0) {
-            return 0.0;
-        }
-        return Math.min(1.0, Math.min(controllerLimit, testedLimit));
-    }
-
-    public double getLimitOpenTimerElapsedSeconds() {
-        if (firingState == FiringState.LIMIT_OPENING) {
-            return limitOpenTimer.seconds();
-        }
-        if (firingState == FiringState.FEEDING) {
-            return TransitConstants.LIMIT_OPEN_LEAD_TIME_SECONDS;
-        }
-        return 0.0;
-    }
-
-    public double getLimitOpenTimerProgress() {
-        double leadTime = TransitConstants.LIMIT_OPEN_LEAD_TIME_SECONDS;
-        if (firingState == FiringState.FEEDING) {
-            return 1.0;
-        }
-        if (firingState != FiringState.LIMIT_OPENING
-                || !Double.isFinite(leadTime)
-                || leadTime <= 0.0) {
-            return 0.0;
-        }
-        return Math.min(1.0, limitOpenTimer.seconds() / leadTime);
-    }
-
     private double updateShootRequest(boolean jamRequested) {
         if (jamRequested) {
-            shooter.idle();
+            shooter.stop();
             autoAim.reset();
             resetFiringSequence(FiringState.WAITING);
+            transit.reverse();
             return 0.0;
         }
 
         boolean validAimingTarget = vision.hasValidAimingTarget();
-        boolean validShootingTarget = vision.hasValidShootingTarget();
-        double autoAimTurn = autoAim.calculateTurnPower(
+        double autoAimTurn = autoAimEnabled ? autoAim.calculateTurnPower(
                 validAimingTarget,
-                vision.getYawErrorDegrees(),
-                drive.getHeadingVelocityDegreesPerSecond()
-        );
+                vision.getYawErrorDegrees()
+        ) : 0.0;
 
-        if (!shooter.startFixedPower()) {
-            shooter.stop();
+        double distanceCm = validAimingTarget ? DistanceUnit.INCH.toCm(
+                vision.getTargetHorizontalDistanceInches()) : Double.NaN;
+        if (!shooter.setDistanceTarget(distanceCm)) {
+            // Invalid position/calibration also cancels an already committed feed.
+            resetFiringSequence(FiringState.WAITING);
+            return validAimingTarget ? autoAimTurn : 0.0;
         }
 
-        canPrepareToFire = active
-                && !manualTranslation
-                && validShootingTarget
-                && vision.getTargetHiveState() == HiveState.HIGH
-                // && shooter.isReady() // 用户要求：暂时不以达速状态限制射击。
-                && shooter.isPitchReady()
-                && autoAim.isLocked()
-                && transit.areLimitPositionsCalibrated();
-        updateFiringSequence(canPrepareToFire);
+        canPrepareToFire = shooter.isReady()
+                && (!autoAimEnabled || autoAim.isLocked())
+                && shooter.isPitchReady();
+        transit.requestFeed(canPrepareToFire);
 
         return validAimingTarget ? autoAimTurn : 0.0;
-    }
-
-    private void updateFiringSequence(boolean readyToOpenLimit) {
-        if (!readyToOpenLimit) {
-            resetFiringSequence(FiringState.WAITING);
-            return;
-        }
-
-        double leadTime = TransitConstants.LIMIT_OPEN_LEAD_TIME_SECONDS;
-        if (!Double.isFinite(leadTime) || leadTime < 0.0) {
-            resetFiringSequence(FiringState.WAITING);
-            return;
-        }
-
-        if (firingState != FiringState.LIMIT_OPENING
-                && firingState != FiringState.FEEDING) {
-            transit.open();
-            firingState = FiringState.LIMIT_OPENING;
-            limitOpenTimer.reset();
-        } else {
-            transit.open();
-        }
-
-        if (firingState == FiringState.LIMIT_OPENING
-                && limitOpenTimer.seconds() >= leadTime) {
-            firingState = FiringState.FEEDING;
-        }
-
     }
 
     private void resetFiringSequence(FiringState resetState) {
@@ -250,9 +160,10 @@ public class ShootAssistCommand extends CommandBase {
             intake.clearBallCount();
         }
         canPrepareToFire = false;
-        firingState = resetState;
-        limitOpenTimer.reset();
-        transit.close();
+        transit.cancelFeeding();
+        if (resetState != FiringState.IDLE) {
+            transit.requestFeed(false);
+        }
     }
 
     private double applyDeadband(double input) {

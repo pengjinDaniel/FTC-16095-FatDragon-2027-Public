@@ -4,7 +4,7 @@ import com.acmerobotics.dashboard.FtcDashboard;
 import com.acmerobotics.dashboard.telemetry.TelemetryPacket;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.hardware.VoltageSensor;
-import com.qualcomm.robotcore.util.Range;
+import com.arcrobotics.ftclib.command.CommandScheduler;
 
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
@@ -42,6 +42,7 @@ public abstract class CoordinateAimTestBase extends OpMode {
 
     @Override
     public void init() {
+        CommandScheduler.getInstance().reset();
         started = false;
         aimRequested = false;
         stopLatched = false;
@@ -120,16 +121,9 @@ public abstract class CoordinateAimTestBase extends OpMode {
             }
             turnPower = autoAim.calculateTurnPower(
                     vision.hasValidAimingTarget(),
-                    vision.getYawErrorDegrees(),
-                    drive.getHeadingVelocityDegreesPerSecond()
+                    vision.getYawErrorDegrees()
             );
-            double maxTurnPower = getEffectiveMaxTurnPower();
-            turnPower = Range.clip(turnPower, -maxTurnPower, maxTurnPower);
-            if (manualTranslation) {
-                drive.moveFieldCentric(forward, strafe, turnPower);
-            } else {
-                drive.moveRobot(forward, strafe, turnPower);
-            }
+            drive.moveRobot(forward, strafe, turnPower);
         } else {
             autoAim.reset();
             positionHold.reset();
@@ -150,19 +144,18 @@ public abstract class CoordinateAimTestBase extends OpMode {
         if (vision != null) {
             vision.stop();
         }
+        CommandScheduler.getInstance().reset();
     }
 
     private void updateSensors() {
         drive.periodic();
         vision.update();
-        boolean correctFromVision = gamepad1.right_trigger <= TeleOpConstants.triggerThreshold;
-        vision.setAimSelectionHeld(started && !stopLatched && !gamepad1.b
-                && !correctFromVision);
-        vision.updateFieldTarget(drive, correctFromVision);
+        vision.updateAimTarget(drive, started, stopLatched || gamepad1.b,
+                gamepad1.a || gamepad1.right_trigger > TeleOpConstants.triggerThreshold);
     }
 
     private void showTelemetry() {
-        telemetry.addLine("Field-relative drive | L3: reset forward | RT: aim (pause calibration) | release RT: calibrate | B: stop");
+        telemetry.addLine("Field-relative drive | L3: reset forward | RT: aim + vision calibration | A: vision calibration | B: stop until RT release");
         telemetry.addData("Control Mode", stopLatched ? "STOPPED"
                 : aimRequested ? "COORDINATE CELL AIM" : "MANUAL DRIVE");
         telemetry.addData("Alliance", getAlliance());
@@ -175,7 +168,7 @@ public abstract class CoordinateAimTestBase extends OpMode {
         telemetry.addData("Area-qualified Alliance Tags", vision.getUsableTagCount());
         telemetry.addData("Raw MT1 (centered map; NOT field XY)", vision.getRawRobotFieldPose()
                 .map(Object::toString).orElse("NONE"));
-        telemetry.addData("Vision Field Pose (center 72/72 in)", vision.getCorrectedRobotFieldPose()
+        telemetry.addData("Vision Field Pose (center 0/0 in; +X audience)", vision.getCorrectedRobotFieldPose()
                 .map(Object::toString).orElse("NONE"));
         telemetry.addData("HIVE Angle (deg)", vision.getHiveAngleDegrees());
         telemetry.addData("Robot Level Error (deg)", vision.getRobotLevelErrorDegrees());
@@ -191,10 +184,11 @@ public abstract class CoordinateAimTestBase extends OpMode {
                 vision.getAverageTagDistanceMeters(), vision.getTagSpanMeters());
         telemetry.addData("MT1 Avg Area (%) / Stddev", "%.3f / %s",
                 vision.getAverageTagArea(), vision.getMt1StandardDeviationDiagnostics());
-        telemetry.addData("Vision Correction Status", drive.getVisionCorrectionStatus());
-        telemetry.addData("Vision Difference (in / deg)", "%.2f / %.2f",
+        telemetry.addData("Last Pinpoint Write Status", drive.getVisionCorrectionStatus());
+        telemetry.addData("Last Vision / Odometry Difference (in / deg)", "%.2f / %.2f",
                 drive.getVisionPositionDifferenceInches(), drive.getVisionHeadingDifferenceDegrees());
-        telemetry.addData("Rejected New Frames", drive.getRejectedVisionFrameCount());
+        telemetry.addData("Rejected New Frames / Forced", "%d / %b",
+                drive.getRejectedVisionFrameCount(), drive.wasVisionCorrectionForced());
         telemetry.addData("Visible Tags", vision.getVisibleTagIds());
         telemetry.addData("CELL States", vision.getObservedClusterStates());
         telemetry.addData("Selected CELL",
@@ -218,7 +212,6 @@ public abstract class CoordinateAimTestBase extends OpMode {
         telemetry.addData("Horizontal Distance (in)", vision.getTargetHorizontalDistanceInches());
         telemetry.addData("Turn Power", turnPower);
         telemetry.addData("Raw Aim Turn Power", autoAim.getRawTurnPower());
-        telemetry.addData("Aim D Turn Power", autoAim.getDerivativeTurnPower());
         telemetry.addData("Heading Velocity (deg/s)", drive.getHeadingVelocityDegreesPerSecond());
         telemetry.addData("Effective Aim Turn Limit", getEffectiveMaxTurnPower());
         telemetry.addData("Aim Locked", autoAim.isLocked());
@@ -227,7 +220,7 @@ public abstract class CoordinateAimTestBase extends OpMode {
         telemetry.addData("Driver Heading (deg)", Math.toDegrees(drive.getDriverHeadingRadians()));
         telemetry.addData("Driver Heading Ready", Double.isFinite(drive.getDriverHeadingRadians()));
         Pose2D pose = drive.getPose();
-        telemetry.addData("Pinpoint field X/Y/H (center 72/72 in)", "%.2f, %.2f in / %.1f deg",
+        telemetry.addData("Pinpoint field X/Y/H (center 0/0 in; +X audience)", "%.2f, %.2f in / %.1f deg",
                 pose.getX(DistanceUnit.INCH), pose.getY(DistanceUnit.INCH),
                 pose.getHeading(AngleUnit.DEGREES));
         telemetry.addData("Position Hold Calibrated", DriveConstants.positionHoldCalibrated);
@@ -239,7 +232,6 @@ public abstract class CoordinateAimTestBase extends OpMode {
             TelemetryPacket packet = new TelemetryPacket();
             packet.put("aimErrorDeg", vision.getYawErrorDegrees());
             packet.put("turnPowerRaw", autoAim.getRawTurnPower());
-            packet.put("turnPowerD", autoAim.getDerivativeTurnPower());
             packet.put("headingVelocityDegPerSec", drive.getHeadingVelocityDegreesPerSecond());
             packet.put("turnPowerApplied", turnPower);
             packet.put("effectiveMaxTurnPower", getEffectiveMaxTurnPower());
@@ -254,6 +246,8 @@ public abstract class CoordinateAimTestBase extends OpMode {
             packet.put("timeToLockSec", timeToLockSeconds);
             packet.put("validAimTarget", vision.hasValidAimingTarget());
             packet.put("visionCorrectionApplied", vision.wasCorrectionApplied());
+            packet.put("visionCorrectionStatus", drive.getVisionCorrectionStatus());
+            packet.put("visionCorrectionForced", drive.wasVisionCorrectionForced());
             packet.put("loopDtSec", loopDtSeconds);
             packet.put("autoAimKp", DriveConstants.autoAimKp);
             packet.put("autoAimKi", DriveConstants.autoAimKi);
@@ -274,13 +268,7 @@ public abstract class CoordinateAimTestBase extends OpMode {
     }
 
     private static double getEffectiveMaxTurnPower() {
-        double controllerLimit = DriveConstants.autoAimMaxTurnPower;
-        double testLimit = DriveConstants.autoAimTestMaxTurnPower;
-        if (!Double.isFinite(controllerLimit) || !Double.isFinite(testLimit)
-                || controllerLimit < 0.0 || testLimit < 0.0) {
-            return 0.0;
-        }
-        return Math.min(1.0, Math.min(controllerLimit, testLimit));
+        return AutoAimController.getEffectiveMaxTurnPower();
     }
 
     private static double applyDeadband(double value) {

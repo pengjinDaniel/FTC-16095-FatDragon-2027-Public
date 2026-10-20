@@ -41,11 +41,6 @@ public class IntakeCommand extends CommandBase {
                 > TeleOpConstants.triggerThreshold;
         boolean jamRequested = gamepadEx.getButton(GamepadKeys.Button.LEFT_BUMPER);
         intake.updateInputs(intakeRequested, jamRequested);
-        if (jamRequested) {
-            transit.reverse();
-        } else {
-            transit.forward();
-        }
-        transit.close();
+        transit.updateIntakeRequest(intakeRequested, jamRequested);
     }
 }

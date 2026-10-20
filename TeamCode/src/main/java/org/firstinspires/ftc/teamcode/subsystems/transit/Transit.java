@@ -4,12 +4,24 @@ import com.arcrobotics.ftclib.command.SubsystemBase;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 import com.qualcomm.robotcore.hardware.Servo;
+import com.qualcomm.robotcore.util.ElapsedTime;
 
 public class Transit extends SubsystemBase {
     private final DcMotor transitMotor;
     private final Servo limitServo;
     private TransitState transitState = TransitState.CLOSE;
     private double requestedPower;
+    private final ElapsedTime feedReverseTimer = new ElapsedTime();
+    private double feedReverseTimeSeconds;
+    private double feedReversePower;
+    private FiringState firingState = FiringState.IDLE;
+
+    public enum FiringState {
+        IDLE,
+        WAITING,
+        REVERSING,
+        FEEDING
+    }
 
     public enum TransitState {
         CLOSE,
@@ -20,8 +32,76 @@ public class Transit extends SubsystemBase {
         transitMotor = hardwareMap.get(DcMotor.class, TransitConstants.transitMotorName);
         limitServo = hardwareMap.get(Servo.class, TransitConstants.limitServoName);
         transitMotor.setDirection(TransitConstants.transitMotorDirection);
+        transitMotor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
         stopMotor();
         close();
+    }
+
+    public void updateIntakeRequest(boolean intakeRequested, boolean jamRequested) {
+        if (firingState != FiringState.IDLE || transitState == TransitState.OPEN) {
+            cancelFeeding();
+        }
+        close();
+        if (jamRequested) {
+            reverse();
+        } else if (intakeRequested) {
+            forward();
+        } else {
+            stopMotor();
+        }
+    }
+
+    // Once the gate opens, only explicit cancellation ends the reverse/feed sequence.
+    public void requestFeed(boolean readyToOpenLimit) {
+        if (firingState != FiringState.REVERSING && firingState != FiringState.FEEDING) {
+            double reverseTime = TransitConstants.feedReverseTime;
+            double reversePower = TransitConstants.feedReversePower;
+            if (!readyToOpenLimit || !areLimitPositionsCalibrated()
+                    || !Double.isFinite(reverseTime) || reverseTime < 0.0
+                    || !Double.isFinite(reversePower) || reversePower >= 0.0 || reversePower < -1.0) {
+                cancelFeeding();
+                firingState = FiringState.WAITING;
+                return;
+            }
+            // RT takes ownership before the gate moves, including while LT remains held.
+            stopMotor();
+            open();
+            feedReverseTimeSeconds = reverseTime;
+            feedReversePower = reversePower;
+            feedReverseTimer.reset();
+            firingState = FiringState.REVERSING;
+        }
+        if (firingState == FiringState.REVERSING) {
+            if (feedReverseTimer.seconds() >= feedReverseTimeSeconds) {
+                firingState = FiringState.FEEDING;
+            } else {
+                setPower(feedReversePower);
+            }
+        }
+        if (firingState == FiringState.FEEDING) {
+            forward();
+        }
+    }
+
+    public void cancelFeeding() {
+        stopMotor();
+        close();
+        firingState = FiringState.IDLE;
+        feedReverseTimer.reset();
+    }
+
+    public FiringState getFiringState() {
+        return firingState;
+    }
+
+    public double getFeedReverseTimerProgress() {
+        double reverseTime = feedReverseTimeSeconds;
+        if (firingState == FiringState.FEEDING) {
+            return 1.0;
+        }
+        return firingState == FiringState.REVERSING
+                && Double.isFinite(reverseTime) && reverseTime > 0.0
+                ? Math.min(1.0, feedReverseTimer.seconds() / reverseTime) : 0.0;
     }
 
     public void forward() {
@@ -75,7 +155,7 @@ public class Transit extends SubsystemBase {
     }
 
     private void setPower(double power) {
-        requestedPower = power;
+        requestedPower = Double.isFinite(power) ? Math.max(-1.0, Math.min(1.0, power)) : 0.0;
         transitMotor.setPower(requestedPower);
     }
 

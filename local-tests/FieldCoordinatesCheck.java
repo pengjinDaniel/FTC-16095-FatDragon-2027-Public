@@ -1,50 +1,58 @@
 package org.firstinspires.ftc.teamcode.subsystems.vision;
 
-import org.firstinspires.ftc.robotcore.external.navigation.*;
+import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
+import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
+import org.firstinspires.ftc.robotcore.external.navigation.Pose2D;
 
-/** Physical invariants, not just conversion round-trips: bearing, side and HIVE state. */
+/** Checks the centered HIVE map and the same live CELL selection used by Blue/Red. */
 public class FieldCoordinatesCheck {
-    static void check(boolean ok,String why) { if(!ok) throw new AssertionError(why); }
-    static Pose2D pose(double x,double y,double heading) {
-        return new Pose2D(DistanceUnit.INCH,x,y,AngleUnit.DEGREES,heading);
+    private static int checks;
+
+    private static void check(boolean condition, String message) {
+        checks++;
+        if (!condition) throw new AssertionError(message);
     }
+
     public static void main(String[] args) {
-        double[][] mapTargets={{-17.7,-12.75},{17.7,-12.75},{17.7,12.75},{-17.7,12.75}};
-        int checks=0;
-        for(double x:new double[]{-60,-20,0,20,60}) {
-            for(double y:new double[]{-60,-20,0,20,60}) {
-                for(double h=-180;h<180;h+=15) {
-                    Pose2D map=pose(x,y,h), field=FieldCoordinates.fromCenteredHiveMap(map);
-                    // Heading basis and translation must agree (rotation -90 degrees).
-                    check(Math.abs(Math.cos(field.getHeading(AngleUnit.RADIANS))-Math.sin(Math.toRadians(h)))<1e-9,"heading axis");
-                    for(CellCluster cell:CellCluster.values()) {
-                        int i=cell.getTuningIndex();
-                        double[] target=VisionConstants.cellTargetFieldXYInches[i];
-                        double oldError=VisionMath.coordinateYawErrorDegrees(map,mapTargets[i][0],mapTargets[i][1],180);
-                        double newError=VisionMath.coordinateYawErrorDegrees(field,target[0],target[1],180);
-                        check(Math.abs(Math.IEEEremainder(newError-oldError,360))<1e-8,"physical aim bearing changed");
-                        check(Math.abs(Math.hypot(mapTargets[i][0]-x,mapTargets[i][1]-y)-Math.hypot(target[0]-field.getX(DistanceUnit.INCH),target[1]-field.getY(DistanceUnit.INCH)))<1e-8,"distance changed");
-                        for(double tilt:new double[]{-30,30}) {
-                            check((-Math.sin(Math.toRadians(tilt))*mapTargets[i][0]>0)==(-Math.sin(Math.toRadians(tilt))*FieldCoordinates.audienceOffsetInches(target[1])>0),"HIGH/LOW changed");
-                        }
-                        checks++;
-                    }
-                    for(Alliance alliance:Alliance.values()) {
-                        CellCluster selected=CellCluster.forFieldPose(alliance,field).get();
-                        check(selected==(alliance==Alliance.BLUE ? (x>=0?CellCluster.BLUE_AUDIENCE:CellCluster.BLUE_OPPOSITE_AUDIENCE) : (x>=0?CellCluster.RED_AUDIENCE:CellCluster.RED_OPPOSITE_AUDIENCE)),"physical half changed");
+        for (Alliance alliance : Alliance.values()) {
+            for (double x : new double[]{-60, -20, 0, 20, 60}) {
+                for (double y : new double[]{-60, -20, 0, 20, 60}) {
+                    CellCluster selected = CellCluster.forFieldX(alliance, x).get();
+                    double[] target = VisionConstants.cellTargetFieldXYInches[selected.getTuningIndex()];
+                    check(target[0] == (x >= 0 ? 17.7 : -17.7), "audience side follows signed X");
+                    check(target[1] == (alliance == Alliance.RED ? -12.75 : 12.75), "alliance target Y");
+                    for (int heading = -180; heading < 180; heading += 15) {
+                        Pose2D inches = new Pose2D(DistanceUnit.INCH, x, y, AngleUnit.DEGREES, heading);
+                        Pose2D centimeters = new Pose2D(DistanceUnit.CM, x * 2.54, y * 2.54,
+                                AngleUnit.RADIANS, Math.toRadians(heading));
+                        double expected = Math.IEEEremainder(
+                                Math.toDegrees(Math.atan2(target[1] - y, target[0] - x))
+                                        - VisionConstants.shooterYawDegrees - heading, 360);
+                        double actual = VisionMath.coordinateYawErrorDegrees(
+                                inches, target[0], target[1], VisionConstants.shooterYawDegrees);
+                        check(Math.abs(Math.IEEEremainder(actual - expected, 360)) < 1e-8,
+                                "coordinate yaw must use the centered map");
+                        check(Math.abs(Math.IEEEremainder(actual - VisionMath.coordinateYawErrorDegrees(
+                                centimeters, target[0], target[1], VisionConstants.shooterYawDegrees),
+                                360)) < 1e-8, "pose units must not change aiming");
                     }
                 }
             }
+            CellCluster left = CellCluster.forFieldX(alliance, -.01).get();
+            CellCluster right = CellCluster.forFieldX(alliance, .01).get();
+            check(left != right, "crossing X=0 selects the current half without an RT latch");
+            check(CellCluster.forFieldX(alliance, 0).get() == right, "center line belongs to audience half");
+            check(!CellCluster.forFieldX(alliance, Double.NaN).isPresent(), "invalid X");
         }
-        // Travel across audience/non-audience while X stays constant: both red and blue lanes.
-        for(Alliance a:Alliance.values()) for(double x:new double[]{20,120}) {
-            CellCluster near=CellCluster.forFieldPose(a,pose(x,20,0)).get();
-            CellCluster far=CellCluster.forFieldPose(a,pose(x,120,0)).get();
-            check(near!=far,"crossing Y=72 must switch even though X never changes sign");
-            Pose2D centimeters=new Pose2D(DistanceUnit.CM,x*2.54,20*2.54,AngleUnit.RADIANS,0);
-            check(CellCluster.forFieldPose(a,centimeters).get()==near,"cm/in normalization");
+        for (int id = 30; id <= 45; id++) {
+            CellCluster cell = CellCluster.forTagId(id).get();
+            check(cell.contains(id), "known tag belongs to its CELL");
+            check(cell.isForAlliance(id < 38 ? Alliance.RED : Alliance.BLUE), "tag alliance");
         }
-        check(!CellCluster.forFieldPose(Alliance.BLUE,pose(Double.NaN,20,0)).isPresent(),"invalid pose");
-        System.out.println("PASS: "+checks+" physical bearing/distance/HIVE checks; both alliances, constant-X half crossings, units, heading, invalid pose");
+        check(!CellCluster.forTagId(29).isPresent() && !CellCluster.forTagId(46).isPresent(),
+                "unknown tags have no CELL");
+        check(Double.isNaN(VisionMath.coordinateYawErrorDegrees(null, 0, 0, 180)),
+                "missing pose cannot aim");
+        System.out.println("PASS FieldCoordinatesCheck: " + checks + " centered-map, units and live-selection assertions");
     }
 }

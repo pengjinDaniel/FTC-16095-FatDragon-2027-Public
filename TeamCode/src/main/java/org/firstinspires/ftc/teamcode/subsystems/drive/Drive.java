@@ -22,6 +22,7 @@ public class Drive extends SubsystemBase {
     private double lastVisionTimestamp = Double.NaN;
     private double lastAcceptedVisionTimestamp = Double.NaN;
     private int rejectedVisionFrameCount;
+    private boolean visionCorrectionForced;
     private double visionPositionDifferenceInches = Double.NaN;
     private double visionHeadingDifferenceDegrees = Double.NaN;
     private String visionCorrectionStatus = "Waiting for corrected vision";
@@ -68,6 +69,7 @@ public class Drive extends SubsystemBase {
             lastVisionTimestamp = Double.NaN;
             lastAcceptedVisionTimestamp = Double.NaN;
             resetVisionRejectionSequence();
+            visionCorrectionForced = false;
             visionCorrectionStatus = "Pinpoint not ready";
             driverHeadingReferenceRadians = Double.NaN;
         } else if (!Double.isFinite(driverHeadingReferenceRadians)) {
@@ -75,7 +77,7 @@ public class Drive extends SubsystemBase {
         }
     }
 
-    // After vision initialization: FieldCoordinates frame, center (72,72) inches.
+    // After vision initialization: historical HIVE-map frame, center (0,0), +X toward audience.
     // Before initialization this is only local odometry, not a known field location.
     public Pose2D getPose() {
         return pinpoint.getPosition();
@@ -118,10 +120,12 @@ public class Drive extends SubsystemBase {
             return false;
         }
         lastVisionTimestamp = visionTimestamp;
+        visionCorrectionForced = false;
         if (!Double.isFinite(DriveConstants.maximumVisionPositionDifferenceInches)
                 || DriveConstants.maximumVisionPositionDifferenceInches < 0.0
                 || !Double.isFinite(DriveConstants.maximumVisionHeadingDifferenceDegrees)
-                || DriveConstants.maximumVisionHeadingDifferenceDegrees < 0.0) {
+                || DriveConstants.maximumVisionHeadingDifferenceDegrees < 0.0
+                || DriveConstants.visionRejectedFramesBeforeOverride < 1) {
             visionCorrectionStatus = "Invalid vision correction gates";
             resetVisionRejectionSequence();
             return false;
@@ -139,33 +143,23 @@ public class Drive extends SubsystemBase {
                 || visionHeadingDifferenceDegrees > DriveConstants.maximumVisionHeadingDifferenceDegrees);
         if (outsideGate) {
             rejectedVisionFrameCount++;
-            visionCorrectionStatus = "Rejected vision jump; using Pinpoint";
-            return false;
+            if (rejectedVisionFrameCount < DriveConstants.visionRejectedFramesBeforeOverride) {
+                visionCorrectionStatus = "Rejected vision jump; waiting for override";
+                return false;
+            }
+            // User policy: repeated good, fresh MT1 corrections take priority over odometry.
+            visionCorrectionForced = true;
         }
         setPose(pose);
         if (fieldPoseInitialized) {
             lastAcceptedVisionTimestamp = visionTimestamp;
             resetVisionRejectionSequence();
-            visionCorrectionStatus = initialized ? "Vision correction applied"
-                    : "Initialized from first corrected frame";
+            visionCorrectionStatus = visionCorrectionForced ? "Forced vision override"
+                    : initialized ? "Vision correction applied" : "Initialized from first corrected frame";
         } else {
             visionCorrectionStatus = "Pinpoint not ready after vision write";
         }
         return fieldPoseInitialized;
-    }
-
-    /** Read-only confidence check; never writes Pinpoint, including while R2 is held. */
-    public boolean isVisionPoseWithinGate(Pose2D pose) {
-        Pose2D predicted = getPose();
-        return isFinitePose(pose) && isFinitePose(predicted)
-                && Double.isFinite(DriveConstants.maximumVisionPositionDifferenceInches)
-                && Double.isFinite(DriveConstants.maximumVisionHeadingDifferenceDegrees)
-                && Math.hypot(pose.getX(DistanceUnit.INCH)-predicted.getX(DistanceUnit.INCH),
-                    pose.getY(DistanceUnit.INCH)-predicted.getY(DistanceUnit.INCH))
-                    <= DriveConstants.maximumVisionPositionDifferenceInches
-                && Math.abs(Math.IEEEremainder(pose.getHeading(AngleUnit.DEGREES)
-                    -predicted.getHeading(AngleUnit.DEGREES),360.0))
-                    <= DriveConstants.maximumVisionHeadingDifferenceDegrees;
     }
 
     private static boolean isFinitePose(Pose2D pose) {
@@ -186,8 +180,7 @@ public class Drive extends SubsystemBase {
 
     public String getVisionCorrectionStatus() { return visionCorrectionStatus; }
     public int getRejectedVisionFrameCount() { return rejectedVisionFrameCount; }
-    // Retain the diagnostic API; corrections never bypass the jump gates.
-    public boolean wasVisionCorrectionForced() { return false; }
+    public boolean wasVisionCorrectionForced() { return visionCorrectionForced; }
     public double getVisionPositionDifferenceInches() { return visionPositionDifferenceInches; }
     public double getVisionHeadingDifferenceDegrees() { return visionHeadingDifferenceDegrees; }
 

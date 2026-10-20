@@ -7,45 +7,9 @@ import org.firstinspires.ftc.robotcore.external.navigation.Pose3D;
 import org.firstinspires.ftc.robotcore.external.navigation.Position;
 
 import java.util.Optional;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
 
 final class VisionMath {
     private VisionMath() {
-    }
-
-    // Filtering the detection list cannot remove a tag from an already fused MT1 pose.
-    // Reject unexpected contributors instead of treating that pose as alliance-only.
-    static String localizationTagRejection(List<Integer> ids, Alliance alliance, int fusedCount) {
-        if (ids == null || ids.isEmpty()) return "No AprilTag detections";
-        Set<Integer> unique = new HashSet<>();
-        for (Integer id : ids) {
-            if (id == null) return "Malformed AprilTag detection";
-            if (!unique.add(id)) return "Duplicate AprilTag ID " + id;
-            Optional<CellCluster> cluster = CellCluster.forTagId(id);
-            if (!cluster.isPresent()) return "Unexpected localization Tag " + id;
-            if (!cluster.get().isForAlliance(alliance)) return "Mixed-alliance HIVE tags";
-        }
-        if (fusedCount < 0 || fusedCount > unique.size()) {
-            return "MT1 tag count inconsistent with detections";
-        }
-        return null;
-    }
-
-    // Diagnostics only: individual planar-tag solutions may be ambiguous. Never use
-    // their disagreement to choose a new heading or reject an otherwise valid MT1.
-    static double[] fieldPoseDifference(Pose3D reference, Pose3D individual) {
-        if (reference == null || individual == null || reference.getOrientation() == null
-                || individual.getOrientation() == null) return null;
-        Optional<Position> a = getRobotSpacePositionInches(reference);
-        Optional<Position> b = getRobotSpacePositionInches(individual);
-        if (!a.isPresent() || !b.isPresent()) return null;
-        double distance = Math.hypot(b.get().x - a.get().x, b.get().y - a.get().y);
-        double yaw = Math.IEEEremainder(individual.getOrientation().getYaw(AngleUnit.DEGREES)
-                - reference.getOrientation().getYaw(AngleUnit.DEGREES), 360.0);
-        return Double.isFinite(distance) && Double.isFinite(yaw)
-                ? new double[]{distance, yaw} : null;
     }
 
     // The fmap stores a flat HIVE; phi is the rotation from the true robot pose to MT1.

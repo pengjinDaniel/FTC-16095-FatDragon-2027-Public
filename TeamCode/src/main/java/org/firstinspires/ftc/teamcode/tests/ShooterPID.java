@@ -1,93 +1,60 @@
 package org.firstinspires.ftc.teamcode.tests;
 
 import com.acmerobotics.dashboard.FtcDashboard;
-import com.acmerobotics.dashboard.config.Config;
 import com.acmerobotics.dashboard.telemetry.TelemetryPacket;
-import com.arcrobotics.ftclib.controller.PIDFController;
+import com.arcrobotics.ftclib.command.CommandScheduler;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
-import com.qualcomm.robotcore.hardware.DcMotor;
-import com.qualcomm.robotcore.hardware.DcMotorEx;
-import com.qualcomm.robotcore.hardware.DcMotorSimple;
-import com.qualcomm.robotcore.hardware.Servo;
-import com.qualcomm.robotcore.util.Range;
 
+import org.firstinspires.ftc.teamcode.opmodes.teleops.TeleOpConstants;
 import org.firstinspires.ftc.teamcode.subsystems.drive.Drive;
 import org.firstinspires.ftc.teamcode.subsystems.drive.DriveConstants;
-import org.firstinspires.ftc.teamcode.subsystems.intake.IntakeConstants;
+import org.firstinspires.ftc.teamcode.subsystems.intake.Intake;
+import org.firstinspires.ftc.teamcode.subsystems.shooter.Shooter;
 import org.firstinspires.ftc.teamcode.subsystems.shooter.ShooterConstants;
-import org.firstinspires.ftc.teamcode.subsystems.transit.TransitConstants;
+import org.firstinspires.ftc.teamcode.subsystems.transit.Transit;
 
-@Config
 @TeleOp(name = "Shooter PID", group = "Tests")
 public class ShooterPID extends OpMode {
-    public static double targetVelocity = 1640.0;
-    public static double maxTestPower = 1.0;
-    public static double pitchPosition = 0.52;
-
-    private static final double feedPower = 0.7;
+    private static final String diagnosticVersion = "ShooterPID-SHARED-2";
     private static final double velocityStep = 100.0;
-    private static final double triggerDeadband = 0.05;
 
-    private final PIDFController leftController = new PIDFController(
-            ShooterConstants.kP, ShooterConstants.kI,
-            ShooterConstants.kD, ShooterConstants.kF);
-    private final PIDFController rightController = new PIDFController(
-            ShooterConstants.kP, ShooterConstants.kI,
-            ShooterConstants.kD, ShooterConstants.kF);
-    private DcMotorEx leftShooterMotor;
-    private DcMotorEx rightShooterMotor;
-    private DcMotor intakeMotor;
-    private DcMotor transitMotor;
-    private Servo pitchServo;
-    private Servo limitServo;
+    private Shooter shooter;
+    private Intake intake;
+    private Transit transit;
     private Drive drive;
     private FtcDashboard dashboard;
     private boolean stopLatched;
+    private boolean feedRequested;
     private boolean dpadLeftWasPressed;
     private boolean dpadUpWasPressed;
     private boolean dpadDownWasPressed;
     private boolean leftStickWasPressed;
-    private boolean limitOpen;
-    private double previousTargetVelocity = Double.NaN;
+    private String controlStatus = "NOT STARTED";
 
     @Override
     public void init() {
-        leftShooterMotor = hardwareMap.get(DcMotorEx.class, ShooterConstants.leftShooterName);
-        rightShooterMotor = hardwareMap.get(DcMotorEx.class, ShooterConstants.rightShooterName);
-
-        // Match DashTuner's raw power signs without an additional direction inversion.
-        leftShooterMotor.setDirection(DcMotorSimple.Direction.FORWARD);
-        rightShooterMotor.setDirection(DcMotorSimple.Direction.FORWARD);
-        leftShooterMotor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
-        rightShooterMotor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+        CommandScheduler.getInstance().reset();
+        drive = new Drive(hardwareMap);
+        shooter = new Shooter(hardwareMap);
+        intake = new Intake(hardwareMap);
+        transit = new Transit(hardwareMap);
+        dashboard = FtcDashboard.getInstance();
         stopLatched = false;
+        feedRequested = false;
         dpadLeftWasPressed = false;
         dpadUpWasPressed = false;
         dpadDownWasPressed = false;
         leftStickWasPressed = false;
-        targetVelocity = 1640.0;
-        maxTestPower = 1.0;
-        intakeMotor = hardwareMap.get(DcMotor.class, IntakeConstants.intakeMotorName);
-        transitMotor = hardwareMap.get(DcMotor.class, TransitConstants.transitMotorName);
-        intakeMotor.setDirection(IntakeConstants.intakeMotorDirection);
-        transitMotor.setDirection(TransitConstants.transitMotorDirection);
-        intakeMotor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
-        transitMotor.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
-        limitServo = hardwareMap.get(Servo.class, TransitConstants.limitServoName);
-        limitOpen = false;
-        limitServo.setPosition(TransitConstants.limitClosed);
-        drive = new Drive(hardwareMap);
         stopMotors();
-        pitchServo = hardwareMap.get(Servo.class, ShooterConstants.pitchServoName);
-        dashboard = FtcDashboard.getInstance();
     }
 
     @Override
     public void init_loop() {
         drive.periodic();
+        telemetry.addData("Version", diagnosticVersion);
         telemetry.addData("Pinpoint", drive.getPinpointStatus());
-        telemetry.addData("Target velocity", "%.1f ticks/s", targetVelocity);
+        telemetry.addData("Target velocity", "%.1f ticks/s", ShooterConstants.targetVelocity);
         telemetry.addData("Limit", "CLOSED");
         telemetry.update();
     }
@@ -101,107 +68,110 @@ public class ShooterPID extends OpMode {
     @Override
     public void loop() {
         drive.periodic();
+        intake.periodic();
+        boolean requested = gamepad1.right_trigger > TeleOpConstants.triggerThreshold;
+        boolean intakeRequested = gamepad1.left_trigger > TeleOpConstants.triggerThreshold;
+        boolean jamRequested = gamepad1.left_bumper;
+
+        if (gamepad1.b) {
+            stopLatched = true;
+        } else if (!requested) {
+            stopLatched = false;
+        }
+        if (gamepad1.dpad_left && !dpadLeftWasPressed) {
+            feedRequested = !feedRequested;
+        }
+        if (gamepad1.dpad_up && !dpadUpWasPressed) {
+            ShooterConstants.targetVelocity += velocityStep;
+        }
+        if (gamepad1.dpad_down && !dpadDownWasPressed) {
+            ShooterConstants.targetVelocity = Math.max(0.0, ShooterConstants.targetVelocity - velocityStep);
+        }
+        dpadLeftWasPressed = gamepad1.dpad_left;
+        dpadUpWasPressed = gamepad1.dpad_up;
+        dpadDownWasPressed = gamepad1.dpad_down;
+
         if (gamepad1.left_stick_button && !leftStickWasPressed) {
             drive.resetDriverHeading();
         }
         leftStickWasPressed = gamepad1.left_stick_button;
-        drive.moveFieldCentric(applyDeadband(-gamepad1.left_stick_y),
-                applyDeadband(gamepad1.left_stick_x), applyDeadband(gamepad1.right_stick_x));
 
-        if (gamepad1.dpad_left && !dpadLeftWasPressed) {
-            limitOpen = !limitOpen;
-        }
-        dpadLeftWasPressed = gamepad1.dpad_left;
-        limitServo.setPosition(limitOpen ? TransitConstants.limitOpen : TransitConstants.limitClosed);
-        if (gamepad1.dpad_up && !dpadUpWasPressed) {
-            targetVelocity += velocityStep;
-        }
-        if (gamepad1.dpad_down && !dpadDownWasPressed) {
-            targetVelocity = Math.max(0.0, targetVelocity - velocityStep);
-        }
-        dpadUpWasPressed = gamepad1.dpad_up;
-        dpadDownWasPressed = gamepad1.dpad_down;
-
-        double leftVelocity = Math.abs(leftShooterMotor.getVelocity());
-        double rightVelocity = Math.abs(rightShooterMotor.getVelocity());
-        double leftPower = 0.0;
-        double rightPower = 0.0;
-        boolean running = canRun(leftVelocity, rightVelocity);
-
-        if (running) {
-            pitchServo.setPosition(Range.clip(pitchPosition,
-                    ShooterConstants.pitchMinPosition, ShooterConstants.pitchMaxPosition));
-            double powerLimit = Range.clip(maxTestPower, 0.0, 1.0);
-            if (targetVelocity != previousTargetVelocity) {
-                leftController.reset();
-                rightController.reset();
-                previousTargetVelocity = targetVelocity;
-            }
-            leftController.setPIDF(ShooterConstants.kP, ShooterConstants.kI,
-                    ShooterConstants.kD, ShooterConstants.kF);
-            rightController.setPIDF(ShooterConstants.kP, ShooterConstants.kI,
-                    ShooterConstants.kD, ShooterConstants.kF);
-            leftPower = leftController.calculate(leftVelocity, targetVelocity);
-            rightPower = rightController.calculate(rightVelocity, targetVelocity);
-            if (!Double.isFinite(leftPower) || !Double.isFinite(rightPower)) {
-                stopLatched = true;
-                running = false;
+        if (stopLatched) {
+            stopMotors();
+            feedRequested = false;
+            controlStatus = "STOP LATCHED: RELEASE RT";
+        } else {
+            drive.moveFieldCentric(applyDeadband(-gamepad1.left_stick_y),
+                    applyDeadband(gamepad1.left_stick_x), applyDeadband(gamepad1.right_stick_x));
+            intake.updateInputs(intakeRequested, jamRequested);
+            if (requested && !jamRequested) {
+                shooter.setTargetVelocity(ShooterConstants.targetVelocity);
+                shooter.setPitchPosition(ShooterConstants.pitchStartPosition);
+                shooter.periodic();
+                if (feedRequested) {
+                    transit.requestFeed(shooter.isReady() && shooter.isPitchReady());
+                } else {
+                    transit.cancelFeeding();
+                }
+                controlStatus = shooter.hasTargetVelocity() ? "PID ACTIVE" : "INVALID SHARED CONFIGURATION";
             } else {
-                leftPower = Range.clip(leftPower, 0.0, powerLimit);
-                rightPower = Range.clip(rightPower, 0.0, powerLimit);
+                if (jamRequested) {
+                    shooter.stop();
+                } else {
+                    shooter.idle();
+                }
+                transit.updateIntakeRequest(intakeRequested, jamRequested);
+                feedRequested = false;
+                controlStatus = jamRequested ? "UNJAM" : "STANDBY";
             }
         }
-
-        if (!running) {
-            leftPower = 0.0;
-            rightPower = 0.0;
-            leftController.reset();
-            rightController.reset();
-            previousTargetVelocity = Double.NaN;
-        }
-        leftShooterMotor.setPower(leftPower);
-        rightShooterMotor.setPower(rightPower);
-        intakeMotor.setPower(running ? feedPower : 0.0);
-        transitMotor.setPower(running ? feedPower : 0.0);
 
         TelemetryPacket packet = new TelemetryPacket();
-        packet.put("mode", "PID");
-        packet.put("targetVelocity", targetVelocity);
-        packet.put("leftVelocity", leftVelocity);
-        packet.put("rightVelocity", rightVelocity);
-        packet.put("leftError", targetVelocity - leftVelocity);
-        packet.put("rightError", targetVelocity - rightVelocity);
-        packet.put("leftPower", leftPower);
-        packet.put("rightPower", rightPower);
-        packet.put("pitchPosition", pitchServo.getPosition());
-        packet.put("intakePower", intakeMotor.getPower());
-        packet.put("transitPower", transitMotor.getPower());
-        packet.put("limitOpen", limitOpen);
-        packet.put("driverHeadingRadians", drive.getDriverHeadingRadians());
-        packet.put("pinpointStatus", drive.getPinpointStatus().toString());
-        packet.put("running", running);
+        packet.put("version", diagnosticVersion);
+        packet.put("controlStatus", controlStatus);
+        packet.put("rtInput", gamepad1.right_trigger);
+        packet.put("bHeld", gamepad1.b);
+        packet.put("powerLimit", ShooterConstants.maxPower);
+        packet.put("leftPidOutput", shooter.getLeftPidOutput());
+        packet.put("rightPidOutput", shooter.getRightPidOutput());
+        packet.put("kP", ShooterConstants.kP);
+        packet.put("kI", ShooterConstants.kI);
+        packet.put("kD", ShooterConstants.kD);
+        packet.put("kF", ShooterConstants.kF);
+        packet.put("mode", shooter.getControlMode());
+        packet.put("targetVelocity", ShooterConstants.targetVelocity);
+        packet.put("leftVelocity", shooter.getLeftVelocity());
+        packet.put("rightVelocity", shooter.getRightVelocity());
+        packet.put("leftPower", shooter.getLeftPower());
+        packet.put("rightPower", shooter.getRightPower());
+        packet.put("shooterReady", shooter.isReady());
+        packet.put("pitchPosition", shooter.getPitchPosition());
+        packet.put("intakePower", intake.getRequestedPower());
+        packet.put("transitPower", transit.getRequestedPower());
+        packet.put("feedRequested", feedRequested);
+        packet.put("firingState", transit.getFiringState().name());
+        packet.put("feedReverseProgress", transit.getFeedReverseTimerProgress());
+        packet.put("running", shooter.hasTargetVelocity());
         packet.put("stopLatched", stopLatched);
         dashboard.sendTelemetryPacket(packet);
 
-        telemetry.addLine("Hold RT: shooter PID, intake/transit +0.7. B stops until RT is released.");
-        telemetry.addLine("D-pad Up/Down: target +/-100 ticks/s. D-pad Left: toggle limit.");
-        telemetry.addLine("Left stick: field-centric move. Right stick X: turn. Left stick button: reset heading.");
-        telemetry.addLine("Set kP/kI/kD/kF in Dashboard > ShooterConstants. PID output limit: 1.0.");
-        telemetry.addData("Mode", "PID");
-        telemetry.addData("Target velocity", "%.1f ticks/s", targetVelocity);
-        telemetry.addData("Left velocity", "%.1f ticks/s", leftVelocity);
-        telemetry.addData("Right velocity", "%.1f ticks/s", rightVelocity);
-        telemetry.addData("Left error", "%.1f ticks/s", targetVelocity - leftVelocity);
-        telemetry.addData("Right error", "%.1f ticks/s", targetVelocity - rightVelocity);
-        telemetry.addData("Left power", "%.3f", leftPower);
-        telemetry.addData("Right power", "%.3f", rightPower);
-        telemetry.addData("Pitch position", "%.3f", pitchServo.getPosition());
-        telemetry.addData("Intake power", "%.2f", intakeMotor.getPower());
-        telemetry.addData("Transit power", "%.2f", transitMotor.getPower());
-        telemetry.addData("Limit", limitOpen ? "OPEN" : "CLOSED");
-        telemetry.addData("Driver heading", "%.1f deg", Math.toDegrees(drive.getDriverHeadingRadians()));
-        telemetry.addData("Pinpoint", drive.getPinpointStatus());
-        telemetry.addData("Running", running);
+        telemetry.addLine("RT: shared shooter PID. LT: intake. LB: unjam. B: stop until RT release.");
+        telemetry.addLine("D-pad Up/Down: shared target +/-100 ticks/s. D-pad Left: request/cancel feeding.");
+        telemetry.addLine("After shooter-ready and pitch-ready, open the gate, reverse transit, then feed.");
+        telemetry.addLine("Dashboard > ShooterConstants: shared target, PIDF, power limit and pitch.");
+        telemetry.addData("Version", diagnosticVersion);
+        telemetry.addData("Control status", controlStatus);
+        telemetry.addData("RT input / B held", "%.3f / %b", gamepad1.right_trigger, gamepad1.b);
+        telemetry.addData("Target velocity", "%.1f ticks/s", ShooterConstants.targetVelocity);
+        telemetry.addData("Left / right velocity", "%.1f / %.1f ticks/s",
+                shooter.getLeftVelocity(), shooter.getRightVelocity());
+        telemetry.addData("Left / right PID output", "%.3f / %.3f",
+                shooter.getLeftPidOutput(), shooter.getRightPidOutput());
+        telemetry.addData("Left / right power", "%.3f / %.3f", shooter.getLeftPower(), shooter.getRightPower());
+        telemetry.addData("Shooter ready", shooter.isReady());
+        telemetry.addData("Feed request / state", "%b / %s", feedRequested, transit.getFiringState());
+        telemetry.addData("Intake / transit power", "%.2f / %.2f",
+                intake.getRequestedPower(), transit.getRequestedPower());
         telemetry.addData("Stop latched", stopLatched);
         telemetry.update();
     }
@@ -209,54 +179,20 @@ public class ShooterPID extends OpMode {
     @Override
     public void stop() {
         stopMotors();
-        limitOpen = false;
-        if (limitServo != null) {
-            limitServo.setPosition(TransitConstants.limitClosed);
+        if (intake != null) {
+            intake.raiseFlower();
         }
+        CommandScheduler.getInstance().reset();
     }
 
     private double applyDeadband(double input) {
         return Math.abs(input) > DriveConstants.joystickDeadband ? input : 0.0;
     }
 
-    private boolean canRun(double leftVelocity, double rightVelocity) {
-        if (gamepad1.b) {
-            stopLatched = true;
-            return false;
-        }
-
-        if (gamepad1.right_trigger <= triggerDeadband) {
-            stopLatched = false;
-            return false;
-        }
-
-        return !stopLatched
-                && Double.isFinite(maxTestPower) && maxTestPower > 0.0
-                && Double.isFinite(pitchPosition)
-                && Double.isFinite(leftVelocity) && Double.isFinite(rightVelocity)
-                && Double.isFinite(targetVelocity) && targetVelocity > 0.0
-                && Double.isFinite(ShooterConstants.kP) && Double.isFinite(ShooterConstants.kI)
-                && Double.isFinite(ShooterConstants.kD) && Double.isFinite(ShooterConstants.kF);
-    }
-
     private void stopMotors() {
-        if (leftShooterMotor != null) {
-            leftShooterMotor.setPower(0.0);
-        }
-        if (rightShooterMotor != null) {
-            rightShooterMotor.setPower(0.0);
-        }
-        if (intakeMotor != null) {
-            intakeMotor.setPower(0.0);
-        }
-        if (transitMotor != null) {
-            transitMotor.setPower(0.0);
-        }
-        if (drive != null) {
-            drive.stop();
-        }
-        leftController.reset();
-        rightController.reset();
-        previousTargetVelocity = Double.NaN;
+        if (shooter != null) shooter.stop();
+        if (intake != null) intake.stop();
+        if (transit != null) transit.cancelFeeding();
+        if (drive != null) drive.stop();
     }
 }

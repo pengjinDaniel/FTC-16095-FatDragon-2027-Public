@@ -6,6 +6,7 @@ import com.acmerobotics.dashboard.FtcDashboard;
 import com.acmerobotics.dashboard.config.Config;
 import com.acmerobotics.dashboard.telemetry.TelemetryPacket;
 import com.arcrobotics.ftclib.controller.PIDFController;
+import com.arcrobotics.ftclib.command.CommandScheduler;
 import com.qualcomm.robotcore.eventloop.opmode.OpMode;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.hardware.ColorSensor;
@@ -17,6 +18,11 @@ import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.util.Range;
 
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
+import org.firstinspires.ftc.teamcode.opmodes.teleops.TeleOpConstants;
+import org.firstinspires.ftc.teamcode.subsystems.drive.DriveConstants;
+import org.firstinspires.ftc.teamcode.subsystems.intake.IntakeConstants;
+import org.firstinspires.ftc.teamcode.subsystems.shooter.ShooterConstants;
+import org.firstinspires.ftc.teamcode.subsystems.transit.TransitConstants;
 
 @TeleOp(name = "DashTuner", group = "Tests")
 @Config
@@ -57,9 +63,12 @@ public class DashTuner extends OpMode {
     };
     private final float[] hsvValues = new float[3];
     private FtcDashboard dashboard;
+    private boolean stopLatched;
 
     @Override
     public void init() {
+        CommandScheduler.getInstance().reset();
+        stopLatched = false;
         dashboard = FtcDashboard.getInstance();
         bindHardware();
         publish(false);
@@ -81,6 +90,7 @@ public class DashTuner extends OpMode {
         for (int i = 0; i < motors.length; i++) {
             stopMotor(i);
         }
+        CommandScheduler.getInstance().reset();
     }
 
     private void bindHardware() {
@@ -93,6 +103,7 @@ public class DashTuner extends OpMode {
                 if (motors[i] != null) {
                     motors[i].setPower(0.0);
                     motors[i].setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
+                    applySharedDirection(motors[i], name);
                 }
             }
 
@@ -113,6 +124,14 @@ public class DashTuner extends OpMode {
 
     private void publish(boolean running) {
         TelemetryPacket packet = new TelemetryPacket();
+        if (gamepad1.b) {
+            stopLatched = true;
+        } else if (!(gamepad1.right_trigger > TeleOpConstants.triggerThreshold)) {
+            stopLatched = false;
+        }
+        running &= !stopLatched;
+        telemetry.addLine("Dashboard targets control each bound device after START; RT/LT are not required.");
+        telemetry.addLine("B: stop; release B and RT to resume. Motor PIDF comes from the slot settings.");
         for (int i = 0; i < motors.length; i++) {
             String name = hardwareName(motorName[i]);
             if (!name.equals(boundMotorName[i])) {
@@ -164,6 +183,17 @@ public class DashTuner extends OpMode {
             dashboard.sendTelemetryPacket(packet);
         }
         telemetry.update();
+    }
+
+    private static void applySharedDirection(DcMotorEx motor, String name) {
+        if (name.equals(DriveConstants.leftFrontMotorName)) motor.setDirection(DriveConstants.leftFrontMotorDirection);
+        else if (name.equals(DriveConstants.leftBackMotorName)) motor.setDirection(DriveConstants.leftBackMotorDirection);
+        else if (name.equals(DriveConstants.rightFrontMotorName)) motor.setDirection(DriveConstants.rightFrontMotorDirection);
+        else if (name.equals(DriveConstants.rightBackMotorName)) motor.setDirection(DriveConstants.rightBackMotorDirection);
+        else if (name.equals(ShooterConstants.leftShooterName)) motor.setDirection(ShooterConstants.leftShooterDirection);
+        else if (name.equals(ShooterConstants.rightShooterName)) motor.setDirection(ShooterConstants.rightShooterDirection);
+        else if (name.equals(IntakeConstants.intakeMotorName)) motor.setDirection(IntakeConstants.intakeMotorDirection);
+        else if (name.equals(TransitConstants.transitMotorName)) motor.setDirection(TransitConstants.transitMotorDirection);
     }
 
     private void updateMotor(int i, TelemetryPacket packet) {

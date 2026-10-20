@@ -1,9 +1,6 @@
 package org.firstinspires.ftc.teamcode.subsystems.vision;
 
 import java.util.Optional;
-import org.firstinspires.ftc.robotcore.external.navigation.Pose2D;
-import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
-import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 
 public enum CellCluster {
     RED_OPPOSITE_AUDIENCE(Alliance.RED, 30, 33, 0),
@@ -35,20 +32,16 @@ public enum CellCluster {
         return tuningIndex;
     }
 
-    // Only accepts the same unified field pose used by aiming and telemetry.
-    // Centerline belongs to the audience half, matching the previous boundary policy.
-    public static Optional<CellCluster> forFieldPose(Alliance alliance, Pose2D pose) {
-        if (alliance == null || pose == null
-                || !Double.isFinite(pose.getX(DistanceUnit.INCH))
-                || !Double.isFinite(pose.getY(DistanceUnit.INCH))
-                || !Double.isFinite(pose.getHeading(AngleUnit.RADIANS))) {
+    // In the 19725 fmap, audience-side CELLS have positive field X.
+    // The center line belongs to the positive-X half for deterministic selection.
+    public static Optional<CellCluster> forFieldX(Alliance alliance, double fieldXInches) {
+        if (alliance == null || !Double.isFinite(fieldXInches)) {
             return Optional.empty();
         }
-        boolean audience = FieldCoordinates.isAudienceSide(pose);
         if (alliance == Alliance.RED) {
-            return Optional.of(audience ? RED_AUDIENCE : RED_OPPOSITE_AUDIENCE);
+            return Optional.of(fieldXInches >= 0.0 ? RED_AUDIENCE : RED_OPPOSITE_AUDIENCE);
         }
-        return Optional.of(audience ? BLUE_AUDIENCE : BLUE_OPPOSITE_AUDIENCE);
+        return Optional.of(fieldXInches >= 0.0 ? BLUE_AUDIENCE : BLUE_OPPOSITE_AUDIENCE);
     }
 
     public static Optional<CellCluster> forTagId(int tagId) {
