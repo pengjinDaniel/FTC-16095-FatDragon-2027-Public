@@ -25,7 +25,6 @@ public class ShooterTest extends OpMode {
     private Vision vision;
     private FtcDashboard dashboard;
     private boolean stopLatched;
-    private boolean started;
     private double distanceCm = Double.NaN;
     private boolean distanceTargetAccepted;
 
@@ -37,7 +36,6 @@ public class ShooterTest extends OpMode {
         drive = new Drive(hardwareMap);
         vision = new Vision(hardwareMap, alliance);
         stopLatched = false;
-        started = false;
         dashboard = FtcDashboard.getInstance();
     }
 
@@ -45,11 +43,6 @@ public class ShooterTest extends OpMode {
     public void init_loop() {
         updateSensors(gamepad1.right_trigger > TeleOpConstants.triggerThreshold);
         showTelemetry();
-    }
-
-    @Override
-    public void start() {
-        started = true;
     }
 
     @Override
@@ -77,7 +70,7 @@ public class ShooterTest extends OpMode {
         drive.stop();
         drive.periodic();
         vision.update();
-        vision.updateAimTarget(drive, started, stopLatched || gamepad1.b, gamepad1.a || requested);
+        vision.updateAimTarget(drive, stopLatched || gamepad1.b, requested);
         distanceCm = vision.hasValidAimingTarget()
                 ? DistanceUnit.INCH.toCm(vision.getTargetHorizontalDistanceInches()) : Double.NaN;
     }
@@ -112,7 +105,8 @@ public class ShooterTest extends OpMode {
         telemetry.addData("Target", vision.getSelectedCluster().map(Enum::name).orElse("NONE"));
         telemetry.addData("Distance to CELL", "%.1f cm", distanceCm);
         telemetry.addData("Target status", vision.getTargetStatus());
-        telemetry.addData("Calibration status", drive.getVisionCorrectionStatus());
+        telemetry.addData("Calibration status", vision.getCalibrationStatus());
+        telemetry.addData("Calibration cooldown (s)", vision.getCalibrationCooldownRemainingSeconds());
         telemetry.addData("Center/wall calibration", Shooter.areDistanceShotValuesValid() ? "VALID" : "INCOMPLETE OR INVALID");
         telemetry.addData("Distance target accepted", distanceTargetAccepted);
         telemetry.addData("Control mode / target velocity", "%s / %.1f ticks/s",

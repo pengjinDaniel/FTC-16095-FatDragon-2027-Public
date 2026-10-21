@@ -26,10 +26,9 @@ public class DriveConstants {
             GoBildaPinpointDriver.EncoderDirection.FORWARD;
     public static GoBildaPinpointDriver.EncoderDirection pinpointStrafePodDirection =
             GoBildaPinpointDriver.EncoderDirection.FORWARD;
-    // October 9 vision-to-odometry gates; repeated rejected frames override.
-    public static double maximumVisionPositionDifferenceInches = 12.0;
-    public static double maximumVisionHeadingDifferenceDegrees = 30.0;
-    public static int visionRejectedFramesBeforeOverride = 3;
+    // After initialization, vision must differ from Pinpoint by less than 5 cm and 5 degrees.
+    public static double maximumVisionPositionDifferenceInches = 5.0 / 2.54;
+    public static double maximumVisionHeadingDifferenceDegrees = 5.0;
     public static boolean positionHoldCalibrated = false;
     public static double positionHoldKp = 0.04;
     public static double positionHoldKi = 0.0;
@@ -43,10 +42,10 @@ public class DriveConstants {
     public static volatile double autoAimKp = -1;
     public static volatile double autoAimKi = 0.0;
     public static volatile double autoAimKd = -0.01;
-    public static volatile double autoAimKf = -0.03;
+    public static volatile double autoAimKf = 0.0;
     public static volatile double autoAimYawToTurnSign = 1.0;
-    public static volatile double autoAimMaxTurnPower = 0.4;
-    public static volatile double autoAimTestMaxTurnPower = 0.4;
+    public static volatile double autoAimMaxTurnPower = 0.7;
+    public static volatile double autoAimTestMaxTurnPower = 0.7;
     public static volatile double aimLockToleranceDegrees = 10.0;
     public static volatile double aimUnlockToleranceDegrees = 10.0;
     public static volatile double aimLockStableTimeSeconds = 0.05;

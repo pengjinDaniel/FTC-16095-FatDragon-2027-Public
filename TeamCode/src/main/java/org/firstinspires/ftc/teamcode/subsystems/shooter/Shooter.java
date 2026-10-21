@@ -16,6 +16,7 @@ public class Shooter extends SubsystemBase {
     private final PIDFController rightController;
 
     private double targetVelocity = Double.NaN;
+    private double velocitySettleReferenceTarget = Double.NaN;
     private boolean velocityControlActive;
     private boolean fixedPowerActive;
     private double requestedFixedPower;
@@ -146,8 +147,10 @@ public class Shooter extends SubsystemBase {
 
         if (!velocityControlActive
                 || !Double.isFinite(targetVelocity)
-                || Math.abs(velocityTicksPerSecond - targetVelocity)
+                || !Double.isFinite(velocitySettleReferenceTarget)
+                || Math.abs(velocityTicksPerSecond - velocitySettleReferenceTarget)
                 > ShooterConstants.targetChangeResetThreshold) {
+            velocitySettleReferenceTarget = velocityTicksPerSecond;
             resetReadyState();
             leftController.reset();
             rightController.reset();
@@ -166,6 +169,7 @@ public class Shooter extends SubsystemBase {
         fixedPowerActive = false;
         velocityControlActive = false;
         targetVelocity = Double.NaN;
+        velocitySettleReferenceTarget = Double.NaN;
         leftPidOutput = 0.0;
         rightPidOutput = 0.0;
         resetReadyState();

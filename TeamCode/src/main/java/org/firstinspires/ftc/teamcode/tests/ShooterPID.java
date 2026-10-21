@@ -16,7 +16,7 @@ import org.firstinspires.ftc.teamcode.subsystems.transit.Transit;
 
 @TeleOp(name = "Shooter PID", group = "Tests")
 public class ShooterPID extends OpMode {
-    private static final String diagnosticVersion = "ShooterPID-SHARED-2";
+    private static final String diagnosticVersion = "ShooterPID-SHARED-3";
     private static final double velocityStep = 100.0;
 
     private Shooter shooter;
@@ -113,7 +113,22 @@ public class ShooterPID extends OpMode {
                 } else {
                     transit.cancelFeeding();
                 }
-                controlStatus = shooter.hasTargetVelocity() ? "PID ACTIVE" : "INVALID SHARED CONFIGURATION";
+                if (!shooter.hasTargetVelocity()) {
+                    controlStatus = "INVALID SHARED CONFIGURATION";
+                } else if (!feedRequested) {
+                    controlStatus = "PID ACTIVE: PRESS D-PAD LEFT TO REQUEST FEED";
+                } else if (transit.getFiringState() == Transit.FiringState.REVERSING
+                        || transit.getFiringState() == Transit.FiringState.FEEDING) {
+                    controlStatus = transit.getFiringState().name();
+                } else if (!transit.areLimitPositionsCalibrated()) {
+                    controlStatus = "WAITING: LIMIT POSITIONS INVALID";
+                } else if (!shooter.isReady()) {
+                    controlStatus = "WAITING: SHOOTER SPEED";
+                } else if (!shooter.isPitchReady()) {
+                    controlStatus = "WAITING: PITCH SETTLING";
+                } else {
+                    controlStatus = "WAITING: FEED CONFIGURATION";
+                }
             } else {
                 if (jamRequested) {
                     shooter.stop();
@@ -130,6 +145,8 @@ public class ShooterPID extends OpMode {
         packet.put("version", diagnosticVersion);
         packet.put("controlStatus", controlStatus);
         packet.put("rtInput", gamepad1.right_trigger);
+        packet.put("ltInput", gamepad1.left_trigger);
+        packet.put("dpadLeftHeld", gamepad1.dpad_left);
         packet.put("bHeld", gamepad1.b);
         packet.put("powerLimit", ShooterConstants.maxPower);
         packet.put("leftPidOutput", shooter.getLeftPidOutput());
@@ -145,6 +162,9 @@ public class ShooterPID extends OpMode {
         packet.put("leftPower", shooter.getLeftPower());
         packet.put("rightPower", shooter.getRightPower());
         packet.put("shooterReady", shooter.isReady());
+        packet.put("pitchReady", shooter.isPitchReady());
+        packet.put("limitPositionsValid", transit.areLimitPositionsCalibrated());
+        packet.put("limitCommand", transit.getState().name());
         packet.put("pitchPosition", shooter.getPitchPosition());
         packet.put("intakePower", intake.getRequestedPower());
         packet.put("transitPower", transit.getRequestedPower());
@@ -168,7 +188,9 @@ public class ShooterPID extends OpMode {
         telemetry.addData("Left / right PID output", "%.3f / %.3f",
                 shooter.getLeftPidOutput(), shooter.getRightPidOutput());
         telemetry.addData("Left / right power", "%.3f / %.3f", shooter.getLeftPower(), shooter.getRightPower());
-        telemetry.addData("Shooter ready", shooter.isReady());
+        telemetry.addData("Shooter / pitch ready", "%b / %b", shooter.isReady(), shooter.isPitchReady());
+        telemetry.addData("Limit command / positions valid", "%s / %b",
+                transit.getState(), transit.areLimitPositionsCalibrated());
         telemetry.addData("Feed request / state", "%b / %s", feedRequested, transit.getFiringState());
         telemetry.addData("Intake / transit power", "%.2f / %.2f",
                 intake.getRequestedPower(), transit.getRequestedPower());

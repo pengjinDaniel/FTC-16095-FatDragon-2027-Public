@@ -80,7 +80,7 @@ public abstract class TeleOpBase extends CommandOpMode {
 
         // The scheduler refreshes sensors before buttons and command execution.
         CommandScheduler.getInstance().addButton(() -> vision.updateAimTarget(
-                drive, started, stopLatched || gamepad1.b, gamepad1.a || aimRequested));
+                drive, stopLatched || gamepad1.b, aimRequested));
 
         new Trigger(
                 () -> gamepadEx.getButton(GamepadKeys.Button.LEFT_STICK_BUTTON)
@@ -112,7 +112,7 @@ public abstract class TeleOpBase extends CommandOpMode {
             stopMechanisms();
             drive.periodic();
             vision.update();
-            vision.updateAimTarget(drive, started, true, gamepad1.a || aimRequested);
+            vision.updateAimTarget(drive, true, aimRequested);
         } else {
             super.run();
         }
@@ -150,7 +150,8 @@ public abstract class TeleOpBase extends CommandOpMode {
         telemetry.addData("场地坐标（中心0/0，X朝观众）", "X %.1f cm / Y %.1f cm / 朝向 %.1f°（%s）",
                 pose.getX(DistanceUnit.CM),pose.getY(DistanceUnit.CM),pose.getHeading(AngleUnit.DEGREES),
                 located ? "已校准" : "未校准，尚非可靠场地坐标");
-        telemetry.addData("校准", drive.getVisionCorrectionStatus());
+        telemetry.addData("校准", vision.getCalibrationStatus());
+        telemetry.addData("校准等待", "%.2f s", vision.getCalibrationCooldownRemainingSeconds());
         double shotDistanceCm = DistanceUnit.INCH.toCm(vision.getTargetHorizontalDistanceInches());
         telemetry.addData("射击距离（到当前目标框）", "%.1f cm", shotDistanceCm);
         if (located && vision.hasValidAimingTarget()
@@ -217,8 +218,8 @@ public abstract class TeleOpBase extends CommandOpMode {
             while (opModeInInit() && !isStopRequested()) {
                 drive.periodic();
                 vision.update();
-                vision.updateAimTarget(drive, false, gamepad1.b,
-                        gamepad1.a || gamepad1.right_trigger > TeleOpConstants.triggerThreshold);
+                vision.updateAimTarget(drive, gamepad1.b,
+                        gamepad1.right_trigger > TeleOpConstants.triggerThreshold);
                 showTelemetry();
                 idle();
             }

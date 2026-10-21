@@ -49,6 +49,10 @@ public class Vision extends SubsystemBase {
     private double hiveAngleDegrees = Double.NaN;
     private double robotLevelErrorDegrees = Double.NaN;
     private boolean correctionApplied;
+    private boolean calibrationSucceeded;
+    private long lastSuccessfulCalibrationNanos;
+    private double calibrationCooldownRemainingSeconds;
+    private String calibrationStatus = "Waiting for corrected vision";
     private boolean validAimingTarget;
     private boolean validShootingTarget;
     private double targetHorizontalDistanceInches = Double.NaN;
@@ -199,21 +203,17 @@ public class Vision extends SubsystemBase {
         poseStatus = "Corrected MT1 field pose ready";
     }
 
-    // October 9 policy: INIT always calibrates; after START, A or RT requests calibration.
-    public void updateAimTarget(
-            Drive drive, boolean started, boolean stopped, boolean calibrationRequested
-    ) {
-        updateFieldTarget(drive, !started || (!stopped && calibrationRequested));
+    // INIT and active entry points share the same RT exclusion and automatic calibration.
+    public void updateAimTarget(Drive drive, boolean stopped, boolean aimRequested) {
+        updateFieldTarget(drive, !stopped && !aimRequested);
     }
 
     public void updateFieldTarget(Drive drive, boolean correctFromVision) {
-        if (correctFromVision) {
-            if (correctedRobotFieldPose != null) {
-                correctionApplied |= drive.calibrateFieldPose(correctedRobotFieldPose, frameTimestamp);
-            } else {
-                drive.resetVisionRejectionSequence();
-            }
-        }
+        updateFieldTarget(drive, correctFromVision, System.nanoTime());
+    }
+
+    void updateFieldTarget(Drive drive, boolean correctFromVision, long nowNanos) {
+        updateCalibration(drive, correctFromVision, nowNanos);
         correctedPoseAccepted = correctedRobotFieldPose != null
                 && drive.hasAcceptedVisionFrame(frameTimestamp);
         validAimingTarget = false;
@@ -262,6 +262,40 @@ public class Vision extends SubsystemBase {
         targetStatus = validAimingTarget ? "Coordinate aim ready from Pinpoint" : "Invalid aim geometry";
     }
 
+    private void updateCalibration(Drive drive, boolean correctFromVision, long nowNanos) {
+        double interval = VisionConstants.calibrationIntervalSeconds;
+        boolean validInterval = Double.isFinite(interval) && interval >= 0.0;
+        calibrationCooldownRemainingSeconds = calibrationSucceeded && validInterval
+                ? Math.max(0.0, interval
+                        - (nowNanos - lastSuccessfulCalibrationNanos) / 1_000_000_000.0)
+                : 0.0;
+        if (!correctFromVision) {
+            calibrationStatus = "Paused: RT held or B stop";
+            return;
+        }
+        if (!validInterval) {
+            calibrationStatus = "Invalid calibration interval";
+            return;
+        }
+        if (calibrationCooldownRemainingSeconds > 0.0) {
+            calibrationStatus = "Waiting after successful calibration";
+            return;
+        }
+        if (correctedRobotFieldPose == null) {
+            drive.resetVisionRejectionSequence();
+            calibrationStatus = "Waiting: " + poseStatus;
+            return;
+        }
+        boolean applied = drive.calibrateFieldPose(correctedRobotFieldPose, frameTimestamp);
+        correctionApplied |= applied;
+        if (applied) {
+            calibrationSucceeded = true;
+            lastSuccessfulCalibrationNanos = nowNanos;
+            calibrationCooldownRemainingSeconds = interval;
+        }
+        calibrationStatus = drive.getVisionCorrectionStatus();
+    }
+
     private static double[] getFieldTarget(CellCluster cluster) {
         double[][] targets = VisionConstants.cellTargetFieldXYInches;
         if (cluster == null || targets == null || cluster.getTuningIndex() >= targets.length) {
@@ -272,6 +306,8 @@ public class Vision extends SubsystemBase {
                 && Double.isFinite(target[0]) && Double.isFinite(target[1]) ? target : null;
     }
 
+    public String getCalibrationStatus() { return calibrationStatus; }
+    public double getCalibrationCooldownRemainingSeconds() { return calibrationCooldownRemainingSeconds; }
     public String getTargetStatus() { return targetStatus; }
     public String getPoseStatus() { return poseStatus; }
     public int getExpectedPipelineIndex() { return pipelineIndex; }

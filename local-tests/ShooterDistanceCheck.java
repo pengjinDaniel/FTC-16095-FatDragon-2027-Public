@@ -81,10 +81,10 @@ public class ShooterDistanceCheck {
         ShooterConstants.kI = 0.0;
         ShooterConstants.kD = 0.0;
         ShooterConstants.kF = 0.0002;
-        ShooterConstants.readyEnterTolerance = 0.05;
-        ShooterConstants.readyExitTolerance = 0.05;
+        ShooterConstants.readyEnterTolerance = 0.06;
+        ShooterConstants.readyExitTolerance = 0.06;
         ShooterConstants.readyStableTimeSeconds = 0.05;
-        ShooterConstants.targetChangeResetThreshold = 0.0;
+        ShooterConstants.targetChangeResetThreshold = 30.0;
         ShooterConstants.pitchSettleTimeSeconds = 0.2;
         ShooterConstants.pitchChangeResetThreshold = 0.005;
         velocities[0] = 1000.0;
@@ -210,7 +210,34 @@ public class ShooterDistanceCheck {
             shot(shooter, 200.0, 1500.0, 0.3);
             check(shooter.isReady(), "unchanged target preserves readiness");
             shot(shooter, 201.0, 1505.0, 0.299);
-            check(!shooter.isReady(), "velocity change uses the shared PID reset threshold");
+            check(shooter.isReady(), "small target change preserves readiness");
+            for (int i = 0; i < 100; i++) {
+                shot(shooter, 200.0 + (i % 2 == 0 ? 0.1 : -0.1),
+                        1500.0 + (i % 2 == 0 ? 0.5 : -0.5),
+                        0.3 + (i % 2 == 0 ? -0.0001 : 0.0001));
+                check(shooter.isReady(), "repeated distance jitter preserves readiness");
+            }
+            shot(shooter, 206.0, 1530.0, 0.294);
+            check(shooter.isReady(), "exact threshold preserves readiness");
+            shot(shooter, 206.2, 1531.0, 0.2938);
+            check(!shooter.isReady(), "cumulative target change restarts readiness");
+            shooter.periodic();
+            long started = System.nanoTime() - 20_000_000L;
+            set(shooter, "withinToleranceSinceNanos", started);
+            shot(shooter, 206.3, 1531.5, 0.2937);
+            Field timer = Shooter.class.getDeclaredField("withinToleranceSinceNanos");
+            timer.setAccessible(true);
+            check(timer.getLong(shooter) == started, "small target change preserves stability timer");
+
+            shot(shooter, 200.0, 1500.0, 0.3);
+            velocities[0] = velocities[1] = 1420.0;
+            shooter.periodic();
+            set(shooter, "withinToleranceSinceNanos", System.nanoTime() - 100_000_000L);
+            shooter.periodic();
+            check(shooter.isReady(), "speed error between five and six percent is accepted");
+            velocities[1] = 1409.0;
+            shooter.periodic();
+            check(!shooter.isReady(), "one flywheel outside six percent clears readiness");
             shot(shooter, 250.0, 1750.0, 0.25);
             check(!shooter.isPitchReady(), "significant pitch change restarts settling");
 

@@ -22,7 +22,6 @@ public class Drive extends SubsystemBase {
     private double lastVisionTimestamp = Double.NaN;
     private double lastAcceptedVisionTimestamp = Double.NaN;
     private int rejectedVisionFrameCount;
-    private boolean visionCorrectionForced;
     private double visionPositionDifferenceInches = Double.NaN;
     private double visionHeadingDifferenceDegrees = Double.NaN;
     private String visionCorrectionStatus = "Waiting for corrected vision";
@@ -69,7 +68,6 @@ public class Drive extends SubsystemBase {
             lastVisionTimestamp = Double.NaN;
             lastAcceptedVisionTimestamp = Double.NaN;
             resetVisionRejectionSequence();
-            visionCorrectionForced = false;
             visionCorrectionStatus = "Pinpoint not ready";
             driverHeadingReferenceRadians = Double.NaN;
         } else if (!Double.isFinite(driverHeadingReferenceRadians)) {
@@ -120,12 +118,10 @@ public class Drive extends SubsystemBase {
             return false;
         }
         lastVisionTimestamp = visionTimestamp;
-        visionCorrectionForced = false;
         if (!Double.isFinite(DriveConstants.maximumVisionPositionDifferenceInches)
                 || DriveConstants.maximumVisionPositionDifferenceInches < 0.0
                 || !Double.isFinite(DriveConstants.maximumVisionHeadingDifferenceDegrees)
-                || DriveConstants.maximumVisionHeadingDifferenceDegrees < 0.0
-                || DriveConstants.visionRejectedFramesBeforeOverride < 1) {
+                || DriveConstants.maximumVisionHeadingDifferenceDegrees < 0.0) {
             visionCorrectionStatus = "Invalid vision correction gates";
             resetVisionRejectionSequence();
             return false;
@@ -138,24 +134,24 @@ public class Drive extends SubsystemBase {
         visionHeadingDifferenceDegrees = isFinitePose(predictedPose) ? Math.abs(Math.IEEEremainder(
                 pose.getHeading(AngleUnit.DEGREES) - predictedPose.getHeading(AngleUnit.DEGREES),
                 360.0)) : Double.NaN;
+        // The first valid vision pose establishes the field frame after odometry reset.
         boolean outsideGate = initialized && (
-                visionPositionDifferenceInches > DriveConstants.maximumVisionPositionDifferenceInches
-                || visionHeadingDifferenceDegrees > DriveConstants.maximumVisionHeadingDifferenceDegrees);
+                !isFinitePose(predictedPose)
+                || !Double.isFinite(visionPositionDifferenceInches)
+                || !Double.isFinite(visionHeadingDifferenceDegrees)
+                || visionPositionDifferenceInches >= DriveConstants.maximumVisionPositionDifferenceInches
+                || visionHeadingDifferenceDegrees >= DriveConstants.maximumVisionHeadingDifferenceDegrees);
         if (outsideGate) {
             rejectedVisionFrameCount++;
-            if (rejectedVisionFrameCount < DriveConstants.visionRejectedFramesBeforeOverride) {
-                visionCorrectionStatus = "Rejected vision jump; waiting for override";
-                return false;
-            }
-            // User policy: repeated good, fresh MT1 corrections take priority over odometry.
-            visionCorrectionForced = true;
+            visionCorrectionStatus = "Rejected vision difference; keeping Pinpoint pose";
+            return false;
         }
         setPose(pose);
         if (fieldPoseInitialized) {
             lastAcceptedVisionTimestamp = visionTimestamp;
             resetVisionRejectionSequence();
-            visionCorrectionStatus = visionCorrectionForced ? "Forced vision override"
-                    : initialized ? "Vision correction applied" : "Initialized from first corrected frame";
+            visionCorrectionStatus = initialized ? "Vision correction applied"
+                    : "Initialized from first corrected frame";
         } else {
             visionCorrectionStatus = "Pinpoint not ready after vision write";
         }
@@ -180,7 +176,6 @@ public class Drive extends SubsystemBase {
 
     public String getVisionCorrectionStatus() { return visionCorrectionStatus; }
     public int getRejectedVisionFrameCount() { return rejectedVisionFrameCount; }
-    public boolean wasVisionCorrectionForced() { return visionCorrectionForced; }
     public double getVisionPositionDifferenceInches() { return visionPositionDifferenceInches; }
     public double getVisionHeadingDifferenceDegrees() { return visionHeadingDifferenceDegrees; }
 

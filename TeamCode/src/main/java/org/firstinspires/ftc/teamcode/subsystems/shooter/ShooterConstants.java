@@ -40,11 +40,11 @@ public class ShooterConstants {
     public static double kF = 0.0005;
 
     // Fractional speed tolerances; fixed power uses a stable measured reference.
-    public static double readyEnterTolerance = 0.05;
-    public static double readyExitTolerance = 0.05;
+    public static double readyEnterTolerance = 0.06;
+    public static double readyExitTolerance = 0.06;
     public static double readyStableTimeSeconds = 0.05;
-    // Target velocity changes above this many ticks/s restart PID and readiness timing.
-    public static double targetChangeResetThreshold = 0.0;
+    // Cumulative target changes above this many ticks/s restart PID and readiness timing.
+    public static double targetChangeResetThreshold = 30.0;
 
     private ShooterConstants() {
     }
