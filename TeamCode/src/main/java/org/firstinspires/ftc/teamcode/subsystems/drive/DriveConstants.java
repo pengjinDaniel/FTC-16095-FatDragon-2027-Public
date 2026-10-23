@@ -38,7 +38,7 @@ public class DriveConstants {
     public static double positionLockExitToleranceInches = 0.75;
     public static double positionLockMaxSpeedInchesPerSecond = 2.0;
     public static double positionLockStableTimeSeconds = 0.15;
-    // October 9 radian gains with the original error-as-setpoint PIDF call.
+    // P/I/D use radian error; F preserves the original error-scaled feedforward.
     public static volatile double autoAimKp = -1;
     public static volatile double autoAimKi = 0.0;
     public static volatile double autoAimKd = -0.01;

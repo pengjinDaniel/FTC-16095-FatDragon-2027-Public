@@ -8,7 +8,7 @@ public class AutoAimController {
             DriveConstants.autoAimKp,
             DriveConstants.autoAimKi,
             DriveConstants.autoAimKd,
-            DriveConstants.autoAimKf
+            0.0
     );
 
     private boolean locked;
@@ -27,11 +27,15 @@ public class AutoAimController {
                 DriveConstants.autoAimKp,
                 DriveConstants.autoAimKi,
                 DriveConstants.autoAimKd,
-                DriveConstants.autoAimKf
+                0.0
         );
         updateLockState(Math.abs(yawErrorDegrees));
 
-        double output = controller.calculate(0.0, Math.toRadians(yawErrorDegrees))
+        double yawErrorRadians = Math.toRadians(yawErrorDegrees);
+        // A fixed setpoint lets FTCLib differentiate the changing error measurement.
+        // Preserve the original error-scaled feedforward outside the zero-setpoint PID.
+        double output = (controller.calculate(-yawErrorRadians, 0.0)
+                + DriveConstants.autoAimKf * yawErrorRadians)
                 * DriveConstants.autoAimYawToTurnSign;
         if (!Double.isFinite(output)) {
             reset();
