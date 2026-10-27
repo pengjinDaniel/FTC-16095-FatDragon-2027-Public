@@ -135,33 +135,33 @@ public class VisionCalibrationCheck {
         Samples retry = new Samples();
         retry.frame(100, 100, -30, true, 0);
         Pose2D previous = retry.pinpoint.position;
-        retry.frame(110, 100, -30, true, 1_500_000_000L);
+        retry.frame(131, 100, -30, true, 1_500_000_000L);
         check(retry.pinpoint.writes == 1 && retry.pinpoint.position == previous,
                 "an out-of-gate frame never overwrites existing XYH");
         check(!retry.vision.isCorrectedPoseAccepted(), "a rejected frame is not visually accepted");
         check(retry.vision.getCalibrationCooldownRemainingSeconds() == 0,
                 "a failed correction starts no cooldown");
-        retry.frame(104.9, 100, -25.1, true, 1_500_000_001L);
+        retry.frame(129.9, 100, -10.1, true, 1_500_000_001L);
         check(retry.pinpoint.writes == 2, "a failed correction retries on the very next fresh frame");
 
         for (double[] candidate : new double[][]{
-                {4.999, 0, 4.999, 1},
-                {5, 0, 0, 0},
-                {5.001, 0, 0, 0},
-                {0, 0, 5, 0},
-                {0, 0, 5.001, 0},
-                {4, 4, 0, 0},
-                {3, 4, 0, 0},
-                {-4.999, 0, -4.999, 1},
-                {0, -5, 0, 0},
-                {0, 0, -5, 0}}) {
+                {29.999, 0, 19.999, 1},
+                {30, 0, 0, 0},
+                {30.001, 0, 0, 0},
+                {0, 0, 20, 0},
+                {0, 0, 20.001, 0},
+                {22, 22, 0, 0},
+                {20, 20, 0, 1},
+                {-29.999, 0, -19.999, 1},
+                {0, -30, 0, 0},
+                {0, 0, -20, 0}}) {
             Samples boundary = new Samples();
             boundary.frame(0, 0, 0, true, 0);
             Pose2D before = boundary.pinpoint.position;
             boundary.frame(candidate[0], candidate[1], candidate[2], true, 1_500_000_000L);
             boolean accepted = candidate[3] == 1;
             check(boundary.pinpoint.writes == (accepted ? 2 : 1),
-                    "strict 5 cm / 5 degree boundary: " + java.util.Arrays.toString(candidate));
+                    "strict 30 cm / 20 degree boundary: " + java.util.Arrays.toString(candidate));
             if (!accepted) {
                 check(boundary.pinpoint.position == before, "rejection preserves every XYH component");
             }
@@ -187,8 +187,8 @@ public class VisionCalibrationCheck {
         wrapped.frame(0, 0, 179, true, 0);
         wrapped.frame(0, 0, -179, true, 1_500_000_000L);
         check(wrapped.pinpoint.writes == 2, "heading wrap uses the shortest two-degree difference");
-        wrapped.frame(0, 0, -174, true, 3_000_000_000L);
-        check(wrapped.pinpoint.writes == 2, "exactly five degrees is rejected after heading wrap");
+        wrapped.frame(0, 0, -159, true, 3_000_000_000L);
+        check(wrapped.pinpoint.writes == 2, "exactly twenty degrees is rejected after heading wrap");
 
         Samples missing = new Samples();
         missing.frame(100, 100, 45, true, 0);

@@ -126,6 +126,19 @@ public abstract class TeleOpBase extends CommandOpMode {
                 && Double.isFinite(pose.getX(DistanceUnit.INCH))
                 && Double.isFinite(pose.getY(DistanceUnit.INCH))
                 && Double.isFinite(pose.getHeading(AngleUnit.DEGREES));
+        if (isAutoAimEnabled()) {
+            double yawError = vision.getYawErrorDegrees();
+            double headingVelocity = drive.getHeadingVelocityDegreesPerSecond();
+            telemetry.addData("X/Y/H", "%.1f cm / %.1f cm / %+.1f°",
+                    pose.getX(DistanceUnit.CM), pose.getY(DistanceUnit.CM),
+                    pose.getHeading(AngleUnit.DEGREES));
+            telemetry.addData("程序应转", !vision.hasValidAimingTarget() || !Double.isFinite(yawError)
+                    ? "无有效目标" : yawError > 0.0 ? "左" : yawError < 0.0 ? "右" : "无需转向");
+            telemetry.addData("实际转向（IMU）", !Double.isFinite(headingVelocity) ? "未知"
+                    : headingVelocity > 0.0 ? "左" : headingVelocity < 0.0 ? "右" : "未转动");
+            telemetry.update();
+            return;
+        }
         CellCluster expected = located ? CellCluster.forFieldX(getAlliance(), pose.getX(DistanceUnit.INCH)).orElse(null) : null;
         CellCluster selected = vision.getSelectedCluster().orElse(null);
         String target = cellLabel(expected);

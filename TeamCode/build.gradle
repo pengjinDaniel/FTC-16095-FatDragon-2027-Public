@@ -18,10 +18,12 @@ dependencies {
     implementation 'org.ftclib.ftclib:core:2.1.1'
 }
 
-// Added local Pedro test support; upstream configuration above is unchanged.
-// Paused with the independent Pedro tests on 2026-10-13.
-// repositories { maven { url 'https://repo.dairy.foundation/releases/' } }
-// dependencies { implementation 'com.pedropathing:revhub:3.0.1' }
+// Pedro 3 dependencies match Quickstart revision 9dc89787898fab6b5cd9095df38489a14bf51a95.
+repositories { maven { url 'https://repo.dairy.foundation/releases/' } }
+dependencies {
+    implementation 'com.pedropathing:revhub:3.0.2'
+    implementation 'com.pedropathing:tuning:1.0.1'
+}
 
 // Added local copies of the user's downloaded official Dashboard artifacts.
 rootProject.allprojects {

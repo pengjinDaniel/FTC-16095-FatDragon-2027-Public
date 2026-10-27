@@ -7,6 +7,7 @@ import com.qualcomm.hardware.limelightvision.LLResultTypes;
 import com.qualcomm.hardware.limelightvision.Limelight3A;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 
+import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.Pose2D;
 import org.firstinspires.ftc.robotcore.external.navigation.Pose3D;
@@ -47,6 +48,8 @@ public class Vision extends SubsystemBase {
     private double averageTagArea = Double.NaN;
     private double[] mt1StandardDeviations;
     private double hiveAngleDegrees = Double.NaN;
+    private boolean hasKnownHiveAngle;
+    private double lastKnownHiveAngleDegrees;
     private double robotLevelErrorDegrees = Double.NaN;
     private boolean correctionApplied;
     private boolean calibrationSucceeded;
@@ -181,13 +184,38 @@ public class Vision extends SubsystemBase {
                 VisionConstants.maximumHiveTiltDegrees, VisionConstants.robotLevelToleranceDegrees
         );
         poseStatus = hiveSolveResult.status;
-        hiveSolveSuccessful = hiveSolveResult.correction != null;
-        if (!hiveSolveSuccessful) {
-            return;
+    }
+
+    private void updateHiveCorrection(Drive drive) {
+        if (hiveSolveResult == null) return;
+        Pose2D referencePose = drive.isFieldPoseInitialized()
+                && drive.getPinpointStatus() == GoBildaPinpointDriver.DeviceStatus.READY
+                ? drive.getPose() : null;
+        VisionMath.HiveCorrection correction =
+                VisionMath.selectHiveCorrection(hiveSolveResult, referencePose);
+        poseStatus = hiveSolveResult.status;
+        hiveSolveSuccessful = correction != null;
+        correctedRobotFieldPose = correction == null ? null : correction.robotPose;
+        if (!hiveSolveSuccessful) return;
+        hiveAngleDegrees = correction.hiveAngleDegrees;
+        robotLevelErrorDegrees = correction.levelErrorDegrees;
+        // RT pauses pose writes, but a Pinpoint-consistent HIVE observation can still move the aim point.
+        if (referencePose != null) {
+            double positionDifference = Math.hypot(
+                    correctedRobotFieldPose.getX(DistanceUnit.INCH) - referencePose.getX(DistanceUnit.INCH),
+                    correctedRobotFieldPose.getY(DistanceUnit.INCH) - referencePose.getY(DistanceUnit.INCH));
+            double headingDifference = Math.abs(Math.IEEEremainder(
+                    correctedRobotFieldPose.getHeading(AngleUnit.DEGREES)
+                            - referencePose.getHeading(AngleUnit.DEGREES), 360.0));
+            if (!Double.isFinite(DriveConstants.maximumVisionPositionDifferenceInches)
+                    || !Double.isFinite(DriveConstants.maximumVisionHeadingDifferenceDegrees)
+                    || !(positionDifference < DriveConstants.maximumVisionPositionDifferenceInches
+                    && headingDifference < DriveConstants.maximumVisionHeadingDifferenceDegrees)) {
+                return;
+            }
         }
-        correctedRobotFieldPose = hiveSolveResult.correction.robotPose;
-        hiveAngleDegrees = hiveSolveResult.correction.hiveAngleDegrees;
-        robotLevelErrorDegrees = hiveSolveResult.correction.levelErrorDegrees;
+        hasKnownHiveAngle = true;
+        lastKnownHiveAngleDegrees = hiveAngleDegrees;
         Map<CellCluster, HiveState> states = new EnumMap<>(CellCluster.class);
         for (CellCluster cluster : CellCluster.values()) {
             double[] target = getFieldTarget(cluster);
@@ -200,7 +228,6 @@ public class Vision extends SubsystemBase {
             }
         }
         observedClusterStates = Collections.unmodifiableMap(states);
-        poseStatus = "Corrected MT1 field pose ready";
     }
 
     // INIT and active entry points share the same RT exclusion and automatic calibration.
@@ -213,6 +240,7 @@ public class Vision extends SubsystemBase {
     }
 
     void updateFieldTarget(Drive drive, boolean correctFromVision, long nowNanos) {
+        updateHiveCorrection(drive);
         updateCalibration(drive, correctFromVision, nowNanos);
         correctedPoseAccepted = correctedRobotFieldPose != null
                 && drive.hasAcceptedVisionFrame(frameTimestamp);
@@ -296,14 +324,16 @@ public class Vision extends SubsystemBase {
         calibrationStatus = drive.getVisionCorrectionStatus();
     }
 
-    private static double[] getFieldTarget(CellCluster cluster) {
+    private double[] getFieldTarget(CellCluster cluster) {
         double[][] targets = VisionConstants.cellTargetFieldXYInches;
         if (cluster == null || targets == null || cluster.getTuningIndex() >= targets.length) {
             return null;
         }
         double[] target = targets[cluster.getTuningIndex()];
-        return target != null && target.length >= 2
-                && Double.isFinite(target[0]) && Double.isFinite(target[1]) ? target : null;
+        return VisionMath.cellTargetForHiveTilt(
+                target, VisionConstants.cellTargetReferenceHeightInches,
+                VisionConstants.hivePivotHeightInches, VisionConstants.cellTargetReferenceTiltDegrees,
+                hasKnownHiveAngle ? lastKnownHiveAngleDegrees : Double.NaN);
     }
 
     public String getCalibrationStatus() { return calibrationStatus; }

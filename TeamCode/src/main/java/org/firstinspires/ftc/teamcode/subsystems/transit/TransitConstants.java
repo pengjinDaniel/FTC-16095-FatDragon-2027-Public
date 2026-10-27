@@ -13,8 +13,8 @@ public class TransitConstants {
     public static boolean limitPositionsCalibrated = true;
     public static double limitClosed = 0.4;
     public static double limitOpen = 0.7;
-    public static double feedReversePower = -0.5;
-    public static double feedReverseTime = 0.200;
+    public static double feedReversePower = -0.38;
+    public static double feedReverseTime = 0.150;
 
     private TransitConstants() {
     }

@@ -19,7 +19,7 @@ public class FieldCoordinatesCheck {
                 for (double y : new double[]{-60, -20, 0, 20, 60}) {
                     CellCluster selected = CellCluster.forFieldX(alliance, x).get();
                     double[] target = VisionConstants.cellTargetFieldXYInches[selected.getTuningIndex()];
-                    check(target[0] == (x >= 0 ? 17.7 : -17.7), "audience side follows signed X");
+                    check(target[0] == (x >= 0 ? 16.52 : -16.52), "audience side follows signed X");
                     check(target[1] == (alliance == Alliance.RED ? -12.75 : 12.75), "alliance target Y");
                     for (int heading = -180; heading < 180; heading += 15) {
                         Pose2D inches = new Pose2D(DistanceUnit.INCH, x, y, AngleUnit.DEGREES, heading);

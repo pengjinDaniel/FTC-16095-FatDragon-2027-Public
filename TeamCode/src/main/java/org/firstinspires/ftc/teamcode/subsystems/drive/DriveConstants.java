@@ -18,7 +18,6 @@ public class DriveConstants {
     public static double joystickDeadband = 0.03;
 
     public static String pinpointName = "pinpoint";
-    // User confirmed 4-Bar pods, offsets, and both encoder directions.
     public static boolean pinpointConfigurationConfirmed = true;
     public static double pinpointXOffsetMm = -96.0;
     public static double pinpointYOffsetMm = -74.0;
@@ -26,14 +25,14 @@ public class DriveConstants {
             GoBildaPinpointDriver.EncoderDirection.FORWARD;
     public static GoBildaPinpointDriver.EncoderDirection pinpointStrafePodDirection =
             GoBildaPinpointDriver.EncoderDirection.FORWARD;
-    // After initialization, vision must differ from Pinpoint by less than 5 cm and 5 degrees.
-    public static double maximumVisionPositionDifferenceInches = 5.0 / 2.54;
-    public static double maximumVisionHeadingDifferenceDegrees = 5.0;
+    // After initialization, vision must differ from Pinpoint by less than 15 cm and 15 degrees.
+    public static double maximumVisionPositionDifferenceInches = 15.0 / 2.54;
+    public static double maximumVisionHeadingDifferenceDegrees = 15.0;
     public static boolean positionHoldCalibrated = false;
-    public static double positionHoldKp = 0.04;
+    public static double positionHoldKp = 0.12;
     public static double positionHoldKi = 0.0;
-    public static double positionHoldKd = 0.0;
-    public static double positionHoldMaxPower = 0.25;
+    public static double positionHoldKd = 0.007;
+    public static double positionHoldMaxPower = 0.6;
     public static double positionLockEnterToleranceInches = 0.75;
     public static double positionLockExitToleranceInches = 0.75;
     public static double positionLockMaxSpeedInchesPerSecond = 2.0;
@@ -42,6 +41,7 @@ public class DriveConstants {
     public static volatile double autoAimKp = -1;
     public static volatile double autoAimKi = 0.0;
     public static volatile double autoAimKd = -0.01;
+
     public static volatile double autoAimKf = 0.0;
     public static volatile double autoAimYawToTurnSign = 1.0;
     public static volatile double autoAimMaxTurnPower = 0.7;
