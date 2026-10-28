@@ -76,10 +76,14 @@ public class ShootAssistCommand extends CommandBase {
         double forward = applyDeadband(gamepadEx.getLeftY());
         double strafe = applyDeadband(gamepadEx.getLeftX());
         manualTranslation = forward != 0.0 || strafe != 0.0;
-        if (!autoAimEnabled || manualTranslation) {
+        if (autoAimEnabled && vision.wasCorrectionApplied()) {
+            autoAim.reset();
+            positionHold.reset();
+        }
+        if (!autoAimEnabled || !vision.isAimCalibrationReady() || manualTranslation) {
             positionHold.reset();
         } else {
-            positionHold.update(drive.getPose(), drive.getPinpointStatus(),
+            positionHold.update(drive.getPose(), drive.isFieldPoseInitialized(),
                     drive.getTranslationSpeedInchesPerSecond());
             forward = positionHold.getForwardPower();
             strafe = positionHold.getStrafePower();
@@ -87,13 +91,18 @@ public class ShootAssistCommand extends CommandBase {
 
         boolean intakeRequested = gamepadEx.getTrigger(GamepadKeys.Trigger.LEFT_TRIGGER)
                 > org.firstinspires.ftc.teamcode.opmodes.teleops.TeleOpConstants.triggerThreshold;
-        boolean jamRequested = gamepadEx.getButton(GamepadKeys.Button.LEFT_BUMPER);
-        intake.updateInputs(intakeRequested, jamRequested);
+        boolean jamRequested = gamepadEx.getButton(GamepadKeys.Button.RIGHT_BUMPER);
+        intake.updateInputs(intakeRequested, jamRequested, true);
         double turnPower = updateShootRequest(jamRequested);
-        if (autoAimEnabled) {
+        if (gamepadEx.getButton(GamepadKeys.Button.LEFT_BUMPER) && !jamRequested) {
+            transit.forwardForIntakeReverse();
+        }
+        if (autoAimEnabled && !manualTranslation) {
             drive.moveRobot(forward, strafe, turnPower);
         } else {
-            drive.moveFieldCentric(forward, strafe, applyDeadband(gamepadEx.getRightX()));
+            // Manual translation stays headless during RT; position hold already returns robot-space powers.
+            drive.moveFieldCentric(forward, strafe,
+                    autoAimEnabled ? turnPower : applyDeadband(gamepadEx.getRightX()));
         }
     }
 
@@ -140,14 +149,15 @@ public class ShootAssistCommand extends CommandBase {
         ) : 0.0;
 
         double distanceCm = validAimingTarget ? DistanceUnit.INCH.toCm(
-                vision.getTargetHorizontalDistanceInches()) : Double.NaN;
+                vision.getTagCenterHorizontalDistanceInches()) : Double.NaN;
         if (!shooter.setDistanceTarget(distanceCm)) {
             // Invalid position/calibration also cancels an already committed feed.
             resetFiringSequence(FiringState.WAITING);
             return validAimingTarget ? autoAimTurn : 0.0;
         }
 
-        canPrepareToFire = shooter.isReady()
+        canPrepareToFire = (!autoAimEnabled || vision.isAimCalibrationReady())
+                && shooter.isReady()
                 && (!autoAimEnabled || autoAim.isLocked())
                 && shooter.isPitchReady();
         transit.requestFeed(canPrepareToFire);

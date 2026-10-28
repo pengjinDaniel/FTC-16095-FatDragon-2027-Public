@@ -123,6 +123,32 @@ public class AutoAimPidfCheck {
         aim.calculateTurnPower(true, 9.0);
         check(!aim.isLocked(), "exceeding unlock tolerance clears lock");
 
+        gains(-1.0, 0.0, 0.0, 0.0);
+        DriveConstants.autoAimAcquisitionTurnPower = 0.15;
+        aim = new AutoAimController();
+        close(aim.calculateTurnPower(true, 1.0, false), -0.15, "search power is independent of old target error");
+        close(aim.calculateTurnPower(true, 0.0, false), -0.15, "old target alignment cannot stop the search");
+        close(aim.calculateTurnPower(true, -170.0, false), -0.15, "old target overshoot cannot reverse or accelerate search");
+        close(aim.calculateTurnPower(true, 179.0, false), -0.15, "large old error cannot raise search power");
+        check(!aim.isLocked(), "search cannot report aim lock");
+        DriveConstants.autoAimKp = -100.0;
+        close(aim.calculateTurnPower(true, -179.0, false), -0.15, "gain changes cannot accelerate or reverse a latched search");
+        close(aim.calculateTurnPower(true, 0.0, true), 0.0, "confirmed PID can stop at its new target");
+        DriveConstants.autoAimKp = -1.0;
+        close(aim.calculateTurnPower(true, -10.0, true), ten, "confirmed PID can reverse toward its new target");
+        aim.reset();
+        close(aim.calculateTurnPower(true, -1.0, false), 0.15, "a new search can choose the other direction");
+        DriveConstants.autoAimMaxTurnPower = 0.1;
+        close(aim.calculateTurnPower(true, 170.0, false), 0.1, "fixed search power still respects the existing cap");
+        close(aim.calculateTurnPower(false, 10.0, false), 0.0, "invalid target stops searching");
+        DriveConstants.autoAimMaxTurnPower = 1.0;
+        close(aim.calculateTurnPower(true, Double.NaN, false), 0.0, "nonfinite error stops searching");
+        close(aim.calculateTurnPower(true, 0.0, false), 0.0, "exact initial alignment does not invent a search direction");
+        DriveConstants.autoAimYawToTurnSign = -1.0;
+        close(aim.calculateTurnPower(true, 10.0, false), 0.15, "configured feedback direction selects the search direction");
+        DriveConstants.autoAimAcquisitionTurnPower = Double.NaN;
+        close(aim.calculateTurnPower(true, 10.0, false), 0.0, "nonfinite search power stops output");
+
         System.out.println("PASS AutoAimPidfCheck: " + checks
                 + " actual-FTCLib PIDF, live tuning, limits, reset and lock assertions");
     }

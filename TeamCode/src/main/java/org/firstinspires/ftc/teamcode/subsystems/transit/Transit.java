@@ -38,12 +38,19 @@ public class Transit extends SubsystemBase {
     }
 
     public void updateIntakeRequest(boolean intakeRequested, boolean jamRequested) {
+        updateIntakeRequest(intakeRequested, jamRequested, false);
+    }
+
+    public void updateIntakeRequest(boolean intakeRequested, boolean jamRequested,
+                                    boolean intakeReverseRequested) {
         if (firingState != FiringState.IDLE || transitState == TransitState.OPEN) {
             cancelFeeding();
         }
         close();
         if (jamRequested) {
             reverse();
+        } else if (intakeReverseRequested) {
+            forwardForIntakeReverse();
         } else if (intakeRequested) {
             forward();
         } else {
@@ -79,7 +86,7 @@ public class Transit extends SubsystemBase {
             }
         }
         if (firingState == FiringState.FEEDING) {
-            forward();
+            setPower(TransitConstants.feedPower);
         }
     }
 
@@ -106,6 +113,10 @@ public class Transit extends SubsystemBase {
 
     public void forward() {
         setPower(TransitConstants.forwardPower);
+    }
+
+    public void forwardForIntakeReverse() {
+        setPower(TransitConstants.intakeReverseForwardPower);
     }
 
     public void reverse() {

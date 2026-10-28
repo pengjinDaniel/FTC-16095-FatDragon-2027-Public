@@ -13,9 +13,9 @@ public class ShooterConstants {
     public static DcMotorSimple.Direction rightShooterDirection =
             DcMotorSimple.Direction.FORWARD;
 
-    public static double idlePower = 0.5;
+    public static double idlePower = 0.7;
     public static double maxPower = 1;
-    public static double targetVelocity = 1640.0;
+    public static double targetVelocity = 1700.0;
     public static String pitchServoName = "pitchServo";
     public static double pitchMinPosition = 0;
     public static double pitchMaxPosition = 0.55;
@@ -23,21 +23,21 @@ public class ShooterConstants {
     public static double pitchSettleTimeSeconds = 0.2;
     public static double pitchChangeResetThreshold = 0.005;
 
-    // Record the same horizontal robot-to-CELL distance shown by Blue/Red, in cm.
+    // Measure horizontally from robot center to the current CELL's four-AprilTag centroid, in cm.
     // Velocity values are encoder ticks/s; pitch values are servo positions, not angles.
-    public static double centerDistanceCm = 67.0;
-    public static double centerVelocityTicksPerSecond = 1590.0;
-    public static double centerPitchPosition = 0.52;
-    public static double wallDistanceCm = 112.0;
-    public static double wallVelocityTicksPerSecond = 1780.0;
-    public static double wallPitchPosition = 0.37;
+    public static double centerDistanceCm = 62.1;
+    public static double centerVelocityTicksPerSecond = 1650.0;
+    public static double centerPitchPosition = 0.54;
+    public static double wallDistanceCm = 139.0;
+    public static double wallVelocityTicksPerSecond = 1840.0;
+    public static double wallPitchPosition = 0.22;
 
     // Enables the selected shared PID configuration; verify its gains on the robot.
     public static boolean velocityControlCalibrated = true;
     public static double kP = 0.004;
     public static double kI = 0.0;
-    public static double kD = 0.0;
-    public static double kF = 0.0005;
+    public static double kD = 0.0007;
+    public static double kF = 0.0009;
 
     // Fractional speed tolerances; fixed power uses a stable measured reference.
     public static double readyEnterTolerance = 0.06;

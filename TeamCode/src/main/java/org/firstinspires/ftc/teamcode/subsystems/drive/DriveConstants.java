@@ -25,7 +25,7 @@ public class DriveConstants {
             GoBildaPinpointDriver.EncoderDirection.FORWARD;
     public static GoBildaPinpointDriver.EncoderDirection pinpointStrafePodDirection =
             GoBildaPinpointDriver.EncoderDirection.FORWARD;
-    // After initialization, vision must differ from Pinpoint by less than 15 cm and 15 degrees.
+    // Pedro autonomous observation checks only; TeleOp vision overwrites bypass these differences.
     public static double maximumVisionPositionDifferenceInches = 15.0 / 2.54;
     public static double maximumVisionHeadingDifferenceDegrees = 15.0;
     public static boolean positionHoldCalibrated = false;
@@ -40,12 +40,12 @@ public class DriveConstants {
     // P/I/D use radian error; F preserves the original error-scaled feedforward.
     public static volatile double autoAimKp = -1;
     public static volatile double autoAimKi = 0.0;
-    public static volatile double autoAimKd = -0.01;
-
-    public static volatile double autoAimKf = 0.0;
+    public static volatile double autoAimKd = -0.0025;
+    public static volatile double autoAimKf = 0;
     public static volatile double autoAimYawToTurnSign = 1.0;
-    public static volatile double autoAimMaxTurnPower = 0.7;
-    public static volatile double autoAimTestMaxTurnPower = 0.7;
+    public static volatile double autoAimMaxTurnPower = 0.5;
+    public static volatile double autoAimTestMaxTurnPower = 0.5;
+    public static volatile double autoAimAcquisitionTurnPower = 0.5;
     public static volatile double aimLockToleranceDegrees = 10.0;
     public static volatile double aimUnlockToleranceDegrees = 10.0;
     public static volatile double aimLockStableTimeSeconds = 0.05;

@@ -39,8 +39,9 @@ public class IntakeCommand extends CommandBase {
     private void updateIntakeRequest() {
         boolean intakeRequested = gamepadEx.getTrigger(GamepadKeys.Trigger.LEFT_TRIGGER)
                 > TeleOpConstants.triggerThreshold;
-        boolean jamRequested = gamepadEx.getButton(GamepadKeys.Button.LEFT_BUMPER);
+        boolean jamRequested = gamepadEx.getButton(GamepadKeys.Button.RIGHT_BUMPER);
         intake.updateInputs(intakeRequested, jamRequested);
-        transit.updateIntakeRequest(intakeRequested, jamRequested);
+        transit.updateIntakeRequest(intakeRequested, jamRequested,
+                gamepadEx.getButton(GamepadKeys.Button.LEFT_BUMPER));
     }
 }

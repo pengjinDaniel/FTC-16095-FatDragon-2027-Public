@@ -71,7 +71,7 @@ public abstract class TeleOpBase extends CommandOpMode {
         drive.setDefaultCommand(new DriveCommand(drive, gamepadEx));
         intake.setDefaultCommand(new IntakeCommand(intake, transit, gamepadEx));
         shooter.setDefaultCommand(new RunCommand(() -> {
-            if (gamepad1.left_bumper) {
+            if (gamepad1.right_bumper) {
                 shooter.stop();
             } else {
                 shooter.idle();
@@ -81,14 +81,12 @@ public abstract class TeleOpBase extends CommandOpMode {
         // The scheduler refreshes sensors before buttons and command execution.
         CommandScheduler.getInstance().addButton(() -> vision.updateAimTarget(
                 drive, stopLatched || gamepad1.b, aimRequested));
+        CommandScheduler.getInstance().addButton(() -> intake.setReverseRequested(
+                gamepadEx.getButton(GamepadKeys.Button.LEFT_BUMPER)));
 
         new Trigger(
                 () -> gamepadEx.getButton(GamepadKeys.Button.LEFT_STICK_BUTTON)
         ).whenActive(drive::resetDriverHeading);
-
-        new Trigger(
-                () -> gamepadEx.getButton(GamepadKeys.Button.RIGHT_BUMPER)
-        ).whenActive(intake::toggleFlower);
 
         new Trigger(
                 () -> gamepadEx.getTrigger(GamepadKeys.Trigger.RIGHT_TRIGGER)
@@ -129,13 +127,46 @@ public abstract class TeleOpBase extends CommandOpMode {
         if (isAutoAimEnabled()) {
             double yawError = vision.getYawErrorDegrees();
             double headingVelocity = drive.getHeadingVelocityDegreesPerSecond();
-            telemetry.addData("X/Y/H", "%.1f cm / %.1f cm / %+.1f°",
-                    pose.getX(DistanceUnit.CM), pose.getY(DistanceUnit.CM),
-                    pose.getHeading(AngleUnit.DEGREES));
+            String targetStatus = drive.isFieldPoseInitialized()
+                    ? vision.getTargetStatus()
+                    : vision.getCalibrationStatus();
+            if (located) {
+                telemetry.addData("X/Y/H", "%.1f cm / %.1f cm / %+.1f°",
+                        pose.getX(DistanceUnit.CM), pose.getY(DistanceUnit.CM),
+                        pose.getHeading(AngleUnit.DEGREES));
+            } else {
+                telemetry.addData("X/Y/H", "无有效场地定位（Pinpoint %s）", drive.getOdometryStatus());
+            }
             telemetry.addData("程序应转", !vision.hasValidAimingTarget() || !Double.isFinite(yawError)
-                    ? "无有效目标" : yawError > 0.0 ? "左" : yawError < 0.0 ? "右" : "无需转向");
+                    ? "无有效目标：" + targetStatus
+                    : yawError > 0.0 ? "左" : yawError < 0.0 ? "右" : "无需转向");
             telemetry.addData("实际转向（IMU）", !Double.isFinite(headingVelocity) ? "未知"
-                    : headingVelocity > 0.0 ? "左" : headingVelocity < 0.0 ? "右" : "未转动");
+                    : Math.abs(headingVelocity) <= 1.0 ? "未转动"
+                    : headingVelocity > 0.0 ? "左" : "右");
+            Pose2D visualPose = vision.getCorrectedRobotFieldPose().orElse(null);
+            String visualCoordinates = visualPose == null ? "无有效视觉坐标"
+                    : String.format(java.util.Locale.US, "X %.1f / Y %.1f cm / H %+.1f°",
+                    visualPose.getX(DistanceUnit.CM), visualPose.getY(DistanceUnit.CM),
+                    visualPose.getHeading(AngleUnit.DEGREES));
+            String poseDifference = !located || visualPose == null ? "无法比较"
+                    : String.format(java.util.Locale.US, "ΔX %+.1f / ΔY %+.1f cm / ΔH %+.1f°",
+                    pose.getX(DistanceUnit.CM) - visualPose.getX(DistanceUnit.CM),
+                    pose.getY(DistanceUnit.CM) - visualPose.getY(DistanceUnit.CM),
+                    Math.IEEEremainder(pose.getHeading(AngleUnit.DEGREES)
+                            - visualPose.getHeading(AngleUnit.DEGREES), 360.0));
+            Pose2D rawOdometry = drive.getRawOdometryPose();
+            String odometryCoordinates = rawOdometry == null ? "无设备数据"
+                    : String.format(java.util.Locale.US, "X %.1f / Y %.1f cm / H %+.1f°",
+                    rawOdometry.getX(DistanceUnit.CM), rawOdometry.getY(DistanceUnit.CM),
+                    rawOdometry.getHeading(AngleUnit.DEGREES));
+            double calibrationAge = vision.getSecondsSinceLastCalibration();
+            String lastCalibration = Double.isFinite(calibrationAge)
+                    ? String.format(java.util.Locale.US, "%.1f 秒前", calibrationAge) : "尚未成功覆盖";
+            telemetry.addData("定位诊断", "视觉：%s\nLL：%s\nPinpoint：%s\nOD原始：%s\n定位状态：%s\nOD−LL：%s\n校准：%s；等待 %.1f s\n上次覆盖：%s\nRT：%s",
+                    vision.getPoseStatus(), visualCoordinates, drive.getOdometryStatus(),
+                    odometryCoordinates, drive.getLocalizationStatus(), poseDifference,
+                    vision.getCalibrationStatus(), vision.getCalibrationCooldownRemainingSeconds(),
+                    lastCalibration, vision.getRtCalibrationStatus());
             telemetry.update();
             return;
         }
@@ -147,7 +178,7 @@ public abstract class TeleOpBase extends CommandOpMode {
         }
         telemetry.addData("应瞄准框", target);
         boolean aligned = isAutoAimEnabled() && started && !stopLatched && aimRequested
-                && vision.hasValidAimingTarget() && autoAim.isLocked();
+                && vision.hasValidAimingTarget() && vision.isAimCalibrationReady() && autoAim.isLocked();
         String aimState = !started ? "等待START" : stopLatched ? "已停止"
                 : !isAutoAimEnabled() ? "手动瞄准（右摇杆转向，R2射击）"
                 : !aimRequested ? "未启动（按R2瞄准）"
@@ -159,21 +190,21 @@ public abstract class TeleOpBase extends CommandOpMode {
         telemetry.addData("瞄准", aimState);
         boolean allowed = started && !stopLatched && aimRequested && shootAssistCommand.canFire();
         telemetry.addData("允许射击", allowed ? "是" : "否：" + shootingBlockReason());
-        // The same fused Pinpoint field pose used for CELL selection and aiming.
+        // The same vision-initialized Pinpoint field pose used for CELL selection and aiming.
         telemetry.addData("场地坐标（中心0/0，X朝观众）", "X %.1f cm / Y %.1f cm / 朝向 %.1f°（%s）",
                 pose.getX(DistanceUnit.CM),pose.getY(DistanceUnit.CM),pose.getHeading(AngleUnit.DEGREES),
                 located ? "已校准" : "未校准，尚非可靠场地坐标");
         telemetry.addData("校准", vision.getCalibrationStatus());
         telemetry.addData("校准等待", "%.2f s", vision.getCalibrationCooldownRemainingSeconds());
-        double shotDistanceCm = DistanceUnit.INCH.toCm(vision.getTargetHorizontalDistanceInches());
-        telemetry.addData("射击距离（到当前目标框）", "%.1f cm", shotDistanceCm);
+        double shotDistanceCm = DistanceUnit.INCH.toCm(vision.getTagCenterHorizontalDistanceInches());
+        telemetry.addData("射击距离（车中心到四Tag中心）", "%.1f cm", shotDistanceCm);
         if (located && vision.hasValidAimingTarget()
                 && Double.isFinite(shotDistanceCm) && shotDistanceCm > 0.0) {
             telemetry.addData("在center位置抄这一行", String.format(java.util.Locale.US,
                     "centerDistanceCm = %.2f;", shotDistanceCm));
             telemetry.addData("在wall位置抄这一行", String.format(java.util.Locale.US,
                     "wallDistanceCm = %.2f;", shotDistanceCm));
-            telemetry.addLine("距离标定：停车并松开RT，抄对应位置的一行（单位cm）。");
+            telemetry.addLine("距离标定：停车后抄对应位置的一行（单位cm）。");
         } else {
             telemetry.addData("距离标定", "等待有效场地定位，暂不能填写距离");
         }
@@ -203,9 +234,10 @@ public abstract class TeleOpBase extends CommandOpMode {
         if (!started) return "等待START";
         if (stopLatched) return "B已停止";
         if (!aimRequested) return "未按R2";
-        if (gamepad1.left_bumper) return "正在排堵";
+        if (gamepad1.right_bumper) return "正在排堵";
         if (!Shooter.areDistanceShotValuesValid()) return "两点射击参数未填完整或超出限值";
         if (!vision.hasValidAimingTarget()) return "定位或瞄准目标无效";
+        if (isAutoAimEnabled() && !vision.isAimCalibrationReady()) return "场地定位不可用；松开RT后校准";
         if (shootAssistCommand.getFiringState() == Transit.FiringState.REVERSING)
             return "已放行，送球前反转中";
         if (!shooter.isReady()) return "射手转速尚未稳定";

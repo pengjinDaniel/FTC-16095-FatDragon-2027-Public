@@ -1,6 +1,5 @@
 package org.firstinspires.ftc.teamcode.subsystems.vision;
 
-import com.qualcomm.hardware.gobilda.GoBildaPinpointDriver;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Collections;
@@ -13,7 +12,7 @@ import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles;
 import org.firstinspires.ftc.teamcode.subsystems.drive.Drive;
 import sun.misc.Unsafe;
 
-/** Replays mirrored HIVE roots and SDK/CAD opening geometry through the production vision path. */
+/** Replays visual HIVE geometry through unconditional Pinpoint calibration and odometry continuation. */
 public class HiveGeometryCheck {
     private static int checks;
     private static final Unsafe ALLOCATOR = allocator();
@@ -89,11 +88,10 @@ public class HiveGeometryCheck {
             pinpoint = (VisionCalibrationCheck.FakePinpoint)
                     ALLOCATOR.allocateInstance(VisionCalibrationCheck.FakePinpoint.class);
             pinpoint.position = pose(0, 0, 0);
-            pinpoint.status = GoBildaPinpointDriver.DeviceStatus.READY;
+            pinpoint.status = com.qualcomm.hardware.gobilda.GoBildaPinpointDriver.DeviceStatus.READY;
             set(drive, Drive.class, "pinpoint", pinpoint);
             set(drive, Drive.class, "driverHeadingReferenceRadians", Double.NaN);
             set(drive, Drive.class, "lastVisionTimestamp", Double.NaN);
-            set(drive, Drive.class, "lastAcceptedVisionTimestamp", Double.NaN);
             set(vision, Vision.class, "alliance", alliance);
             set(vision, Vision.class, "observedClusterStates", Collections.emptyMap());
         }
@@ -104,32 +102,31 @@ public class HiveGeometryCheck {
             set(vision, Vision.class, "frameTimestamp", timestamp);
             vision.updateFieldTarget(drive, allowed, now);
         }
+
+        void calibrate(VisionMath.HiveSolveResult solve, double timestamp, long now) throws Exception {
+            for (int i = 0; i < 3; i++) {
+                frame(solve, timestamp - (2 - i) * .1, true, now + i * 20_000_000L);
+            }
+        }
     }
 
     public static void main(String[] args) throws Exception {
-        VisionMath.HiveSolveResult ambiguous = noisyMirror();
-        check(ambiguous.usableCandidateCount == 2, "both noisy roots remain geometrically usable");
-        check(ambiguous.correction == null, "an ambiguous initial frame must not initialize mirrored X");
-        VisionMath.HiveCorrection positive =
-                VisionMath.selectHiveCorrection(ambiguous, pose(3, 40, 90));
-        close(positive.robotPose.getX(DistanceUnit.INCH), 3, .01, "Pinpoint selects positive X");
-        close(positive.robotPose.getHeading(AngleUnit.DEGREES), 90, 1e-6, "heading is preserved");
-        VisionMath.HiveCorrection negative =
-                VisionMath.selectHiveCorrection(ambiguous, pose(-3, 40, 90));
-        close(negative.robotPose.getX(DistanceUnit.INCH), -3, .01, "Pinpoint selects negative X");
-        check(VisionMath.selectHiveCorrection(ambiguous, pose(0, 40, 90)) == null,
-                "equidistant roots remain unresolved");
-        check(VisionMath.selectHiveCorrection(ambiguous, null) == null,
-                "a previous selection cannot leak into a frame without a reference");
-        check(VisionMath.selectHiveCorrection(ambiguous, pose(Double.NaN, 40, 90)) == null,
-                "an invalid reference cannot select a root");
+        VisionMath.HiveSolveResult visual = noisyMirror();
+        check(visual.usableCandidateCount == 1 && visual.correction != null,
+                "full visual orientation provides one pose without a Pinpoint reference");
+        close(visual.correction.robotPose.getHeading(AngleUnit.DEGREES), 90, 1e-6,
+                "visual correction preserves heading");
+        close(visual.correction.hiveAngleDegrees, -26, 1e-6,
+                "visual HIVE tilt uses both pitch and roll");
+        check(Math.abs(visual.correction.robotPose.getX(DistanceUnit.INCH)) < .2,
+                "orientation noise does not select the old mirrored floor root");
 
         for (double x : new double[]{-30, -3, 0, 3, 30}) {
             for (double heading : new double[]{-180, -135, -90, -45, 0, 45, 90, 135}) {
                 for (double theta : new double[]{-35, -30, 0, 30, 35}) {
                     VisionMath.HiveSolveResult result = solve(x, 40, heading, theta);
                     VisionMath.HiveCorrection corrected =
-                            VisionMath.selectHiveCorrection(result, pose(x, 40, heading));
+                            result.correction;
                     check(corrected != null, "consistent CAD pose must be solvable: x=" + x + ", h=" + heading
                             + ", tilt=" + theta + ", status=" + result.status
                             + ", roots=" + java.util.Arrays.toString(result.candidatePhiDegrees));
@@ -151,8 +148,7 @@ public class HiveGeometryCheck {
                 for (double mapXError : new double[]{-2e-8, 2e-8}) {
                     VisionMath.HiveSolveResult result =
                             solve(xCm / 2.54, 40, 90, theta, mapXError, 5e-10);
-                    VisionMath.HiveCorrection correction = VisionMath.selectHiveCorrection(
-                            result, pose(xCm / 2.54, 40, 90));
+                    VisionMath.HiveCorrection correction = result.correction;
                     if (xCm == 0) {
                         check(correction == null || correction.robotPose.getX(DistanceUnit.INCH) == 0,
                                 "center-line map rounding must wait or preserve deterministic X=0");
@@ -180,49 +176,87 @@ public class HiveGeometryCheck {
             }
         }
 
+        for (CellCluster cluster : CellCluster.values()) {
+            double side = cluster == CellCluster.RED_AUDIENCE || cluster == CellCluster.BLUE_AUDIENCE
+                    ? 1.0 : -1.0;
+            double tagY = cluster.isForAlliance(Alliance.BLUE) ? 12.75 : -12.75;
+            // Independent centroids of the four fmap translations, rotated about the CAD pivot.
+            for (double[] sample : new double[][]{
+                    {0.0, 14.2690594488}, {-30.0, 13.1064522228}, {30.0, 11.6082837189}}) {
+                double[] center = VisionMath.tagClusterCenterForHiveTilt(cluster, side * sample[0]);
+                close(center[0], side * sample[1], .0001, "four-tag center follows HIVE tilt");
+                close(center[1], tagY, 1e-9, "four-tag center keeps alliance Y");
+            }
+            double[] fallback = VisionMath.tagClusterCenterForHiveTilt(cluster, Double.NaN);
+            close(fallback[0], side * 13.1064522228, .0001, "unknown tilt uses nominal HIGH geometry");
+        }
+        check(VisionMath.tagClusterCenterForHiveTilt(null, 0.0) == null,
+                "missing CELL has no four-tag center");
+
+        for (Alliance alliance : Alliance.values()) {
+            for (double side : new double[]{-1, 1}) {
+                for (double distanceCm : new double[]{67.0, 89.5, 112.0}) {
+                    RuntimePath runtime = new RuntimePath(alliance);
+                    double x = side * 13.1064522228;
+                    double y = (alliance == Alliance.BLUE ? 1 : -1) * (12.75 + distanceCm / 2.54);
+                    check(runtime.drive.updateVisionPose(pose(x, y, 90), 1, 0), "measured pose initializes");
+                    runtime.frame(solve(x, y, 90, -side * 30.0), 2, false, 0);
+                    close(DistanceUnit.INCH.toCm(runtime.vision.getTagCenterHorizontalDistanceInches()),
+                            distanceCm, .002, "production shot distance matches the four-tag measurement");
+                    close(runtime.vision.getTargetXInches(), side * 16.52, .002,
+                            "aiming retains the CELL opening center");
+                }
+            }
+        }
+
         RuntimePath cold = new RuntimePath(Alliance.BLUE);
-        cold.frame(noisyMirror(), 1, true, 0);
-        check(cold.pinpoint.writes == 0 && !cold.drive.isFieldPoseInitialized(),
-                "an ambiguous first frame cannot write Pinpoint");
-        check(!cold.vision.hasValidAimingTarget(), "uninitialized ambiguous pose cannot aim");
+        cold.calibrate(solve(0, 0, 180, -30), 1, 0);
+        check(cold.drive.isFieldPoseInitialized() && cold.vision.hasValidAimingTarget(),
+                "center field coordinates initialize from the visual pose");
+        close(cold.drive.getPose().getX(DistanceUnit.INCH), 0, .001, "center X");
+        close(cold.drive.getPose().getY(DistanceUnit.INCH), 0, .001, "center Y");
+        close(Math.abs(cold.drive.getPose().getHeading(AngleUnit.DEGREES)), 180, .001,
+                "opposite-audience intake heading remains 180 degrees");
 
         RuntimePath warm = new RuntimePath(Alliance.BLUE);
-        check(warm.drive.calibrateFieldPose(pose(3, 40, 90), 1), "independent pose initializes Pinpoint");
-        warm.frame(noisyMirror(), 2, true, 1_500_000_000L);
-        check(warm.pinpoint.position.getX(DistanceUnit.INCH) > 0,
-                "the 30 cm gate no longer admits the opposite HIVE root");
-        check(warm.vision.getSelectedCluster().get() == CellCluster.BLUE_AUDIENCE,
-                "the mirrored-root replay keeps the correct CELL");
-        check(warm.vision.getYawErrorDegrees() > 0, "the replay requests the correct left turn");
+        warm.drive.updateVisionPose(pose(100, 40, 0), 1, 0);
+        warm.calibrate(solve(-30, 40, 180, 30), 2, 100_000_000L);
+        close(warm.drive.getPose().getX(DistanceUnit.INCH), -30, .001,
+                "a previous wrong pose cannot reject current Limelight localization");
+        check(warm.vision.getSelectedCluster().get() == CellCluster.BLUE_OPPOSITE_AUDIENCE,
+                "a confirmed visual position changes the selected half");
 
         for (Alliance alliance : Alliance.values()) {
             RuntimePath runtime = new RuntimePath(alliance);
             double y = alliance == Alliance.BLUE ? 40 : -40;
-            runtime.frame(solve(30, y, 90, -30), 1, true, 0);
-            check(runtime.pinpoint.writes == 1, "a unique first frame still initializes");
+            runtime.calibrate(solve(30, y, 180, -30), 1, 0);
+            check(runtime.drive.isFieldPoseInitialized(), "three stable visual frames initialize");
             close(runtime.vision.getTargetXInches(), 16.52, .002, "HIGH opening reference");
-            runtime.frame(solve(30, y, 90, 0), 2, false, 100_000_000L);
-            check(runtime.pinpoint.writes == 1, "RT continues to block Pinpoint writes");
+            runtime.frame(solve(30, y, 180, 0), 2, false, 100_000_000L);
+            check(!runtime.drive.hasAcceptedVisionFrame(2), "B stop pauses visual pose overwrites");
             close(runtime.vision.getTargetXInches(), 21.456559, .002,
-                    "the aim point follows HIVE tilt while RT is held");
+                    "the aim point follows HIVE tilt while pose writes are paused");
             check(runtime.vision.getTargetHiveState() == HiveState.MIDDLE,
-                    "HIVE state follows the accepted observation");
-            double lastTarget = runtime.vision.getTargetXInches();
+                    "HIVE state follows the current visual observation");
             Method clear = Vision.class.getDeclaredMethod("clearCurrentFrame");
             clear.setAccessible(true);
             clear.invoke(runtime.vision);
             runtime.vision.updateFieldTarget(runtime.drive, false, 200_000_000L);
-            close(runtime.vision.getTargetXInches(), lastTarget, 1e-9,
-                    "tag loss preserves the last known opening angle");
-            runtime.frame(solve(100, y, 90, 30), 3, false, 300_000_000L);
-            close(runtime.vision.getTargetXInches(), lastTarget, 1e-9,
-                    "an out-of-gate observation cannot move the cached target");
-            runtime.frame(solve(100, y, 90, 30), 4, true, 1_500_000_000L);
-            check(runtime.pinpoint.writes == 1, "an out-of-gate observation still cannot write pose");
-            check(runtime.drive.getRejectedVisionFrameCount() == 1,
-                    "normal calibration rejection reporting remains intact");
+            check(runtime.drive.isFieldPoseInitialized() && runtime.vision.hasValidAimingTarget(),
+                    "tag loss preserves initialized odometry and aiming");
+            check(Double.isFinite(runtime.vision.getTagCenterHorizontalDistanceInches()),
+                    "tag loss retains shot distance from cached HIVE geometry");
+            runtime.pinpoint.position = pose(-30, y, 180);
+            runtime.frame(solve(-30, y, 180, 30), 3, false, 300_000_000L);
+            check(!runtime.drive.hasAcceptedVisionFrame(3),
+                    "a paused overwrite keeps using odometry");
+            close(runtime.vision.getTargetXInches(), -16.52, .002,
+                    "crossing the field switches to the opposite opening");
+            check(runtime.vision.getSelectedCluster().get()
+                            == CellCluster.forFieldX(alliance, -30).get(),
+                    "Red and Blue both select the current odometry half");
         }
         System.out.println("PASS HiveGeometryCheck: " + checks
-                + " mirrored-root, independent CAD/SDK, RT and cached-angle assertions");
+                + " visual-orientation, independent CAD/SDK, B-stop exclusion and odometry-continuation assertions");
     }
 }

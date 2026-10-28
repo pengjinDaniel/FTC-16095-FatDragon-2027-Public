@@ -41,7 +41,7 @@ public class ShooterTest extends OpMode {
 
     @Override
     public void init_loop() {
-        updateSensors(gamepad1.right_trigger > TeleOpConstants.triggerThreshold);
+        updateSensors();
         showTelemetry();
     }
 
@@ -53,7 +53,7 @@ public class ShooterTest extends OpMode {
         } else if (!requested) {
             stopLatched = false;
         }
-        updateSensors(requested);
+        updateSensors();
         distanceTargetAccepted = false;
         if (stopLatched) {
             shooter.stop();
@@ -66,13 +66,14 @@ public class ShooterTest extends OpMode {
         showTelemetry();
     }
 
-    private void updateSensors(boolean requested) {
+    private void updateSensors() {
         drive.stop();
         drive.periodic();
         vision.update();
-        vision.updateAimTarget(drive, stopLatched || gamepad1.b, requested);
+        vision.updateAimTarget(drive, stopLatched || gamepad1.b,
+                gamepad1.right_trigger > TeleOpConstants.triggerThreshold);
         distanceCm = vision.hasValidAimingTarget()
-                ? DistanceUnit.INCH.toCm(vision.getTargetHorizontalDistanceInches()) : Double.NaN;
+                ? DistanceUnit.INCH.toCm(vision.getTagCenterHorizontalDistanceInches()) : Double.NaN;
     }
 
     private void showTelemetry() {
@@ -103,7 +104,7 @@ public class ShooterTest extends OpMode {
         telemetry.addLine("RT: distance-based shot. Release RT: shared standby power. B stops until RT is released.");
         telemetry.addData("Alliance", vision.getAlliance());
         telemetry.addData("Target", vision.getSelectedCluster().map(Enum::name).orElse("NONE"));
-        telemetry.addData("Distance to CELL", "%.1f cm", distanceCm);
+        telemetry.addData("Robot center to four-tag center", "%.1f cm", distanceCm);
         telemetry.addData("Target status", vision.getTargetStatus());
         telemetry.addData("Calibration status", vision.getCalibrationStatus());
         telemetry.addData("Calibration cooldown (s)", vision.getCalibrationCooldownRemainingSeconds());

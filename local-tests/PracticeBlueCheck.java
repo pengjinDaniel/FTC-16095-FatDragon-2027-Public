@@ -3,6 +3,7 @@ package org.firstinspires.ftc.teamcode.opmodes.teleops;
 import com.arcrobotics.ftclib.gamepad.GamepadEx;
 import com.qualcomm.robotcore.eventloop.opmode.TeleOp;
 import com.qualcomm.robotcore.hardware.DcMotor;
+import com.qualcomm.robotcore.hardware.DistanceSensor;
 import com.qualcomm.robotcore.hardware.Gamepad;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.util.ElapsedTime;
@@ -10,10 +11,12 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import org.firstinspires.ftc.robotcore.external.navigation.Pose2D;
+import org.firstinspires.ftc.teamcode.commands.IntakeCommand;
 import org.firstinspires.ftc.teamcode.commands.ShootAssistCommand;
 import org.firstinspires.ftc.teamcode.subsystems.drive.AutoAimController;
 import org.firstinspires.ftc.teamcode.subsystems.drive.Drive;
 import org.firstinspires.ftc.teamcode.subsystems.intake.Intake;
+import org.firstinspires.ftc.teamcode.subsystems.intake.IntakeConstants;
 import org.firstinspires.ftc.teamcode.subsystems.shooter.Shooter;
 import org.firstinspires.ftc.teamcode.subsystems.shooter.ShooterDistanceCheck;
 import org.firstinspires.ftc.teamcode.subsystems.transit.Transit;
@@ -68,16 +71,20 @@ public class PracticeBlueCheck {
         int cleared;
         boolean intakeRequested;
         TestIntake() { super(null); }
-        @Override public void updateInputs(boolean requested, boolean jam) { intakeRequested = requested; }
-        @Override public void clearBallCount() { cleared++; }
-        @Override public void suspend() { intakeRequested = false; }
+        @Override public void updateInputs(boolean requested, boolean jam, boolean shoot) {
+            intakeRequested = requested;
+            super.updateInputs(requested, jam, shoot);
+        }
+        @Override public void clearBallCount() { cleared++; super.clearBallCount(); }
+        @Override public void suspend() { intakeRequested = false; super.suspend(); }
     }
 
     private static class TestVision extends Vision {
         boolean valid;
         TestVision() { super(null, Alliance.BLUE); }
         @Override public boolean hasValidAimingTarget() { return valid; }
-        @Override public double getTargetHorizontalDistanceInches() { return 200.0 / 2.54; }
+        @Override public double getTargetHorizontalDistanceInches() { return 400.0 / 2.54; }
+        @Override public double getTagCenterHorizontalDistanceInches() { return 200.0 / 2.54; }
         @Override public double getYawErrorDegrees() { return 90.0; }
     }
 
@@ -138,9 +145,68 @@ public class PracticeBlueCheck {
         set(transit, Transit.class, "feedReverseTimer", timer);
         set(transit, Transit.class, "transitState", Transit.TransitState.CLOSE);
         set(transit, Transit.class, "firingState", Transit.FiringState.IDLE);
+        set(intake, Intake.class, "intakeMotor", Proxy.newProxyInstance(DcMotor.class.getClassLoader(),
+                new Class<?>[]{DcMotor.class}, (proxy, method, values) -> {
+                    if (method.getName().equals("setPower")) return null;
+                    throw new AssertionError("Unexpected intake motor call: " + method);
+                }));
+        set(intake, Intake.class, "colorDistanceSensor", Proxy.newProxyInstance(
+                DistanceSensor.class.getClassLoader(), new Class<?>[]{DistanceSensor.class},
+                (proxy, method, values) -> {
+                    if (method.getName().equals("getDistance")) return Double.NaN;
+                    throw new AssertionError("Unexpected distance sensor call: " + method);
+                }));
+        set(intake, Intake.class, "distanceCm", 10.0);
         TransitConstants.limitPositionsCalibrated = true;
         TransitConstants.feedReverseTime = 0.200;
         TransitConstants.feedReversePower = -0.5;
+        near(TransitConstants.intakeReverseForwardPower, 0.4, "LB transit forward power");
+        intake.updateInputs(true, false);
+        transit.updateIntakeRequest(true, false);
+        near(intake.getRequestedPower(), IntakeConstants.activePower, "LT runs intake forward");
+        near(power[0], TransitConstants.forwardPower, "LT keeps intake transit power");
+
+        IntakeCommand intakeCommand = new IntakeCommand(intake, transit, inputs);
+        set(intake, Intake.class, "ballCount", 2);
+        gamepad.left_bumper = true;
+        intake.setReverseRequested(true);
+        intakeCommand.initialize();
+        near(intake.getRequestedPower(), IntakeConstants.jamPower, "LB reverses intake without LT");
+        near(power[0], 0.4, "LB alone runs transit forward");
+        intake.periodic();
+        near(intake.getRequestedPower(), IntakeConstants.jamPower, "LB survives sensor refresh with invalid distance");
+        gamepad.left_trigger = 1.0f;
+        intakeCommand.execute();
+        near(intake.getRequestedPower(), IntakeConstants.jamPower, "LB overrides LT intake");
+        near(power[0], 0.4, "LB overrides LT transit power");
+        gamepad.left_bumper = false;
+        intake.setReverseRequested(false);
+        set(intake, Intake.class, "distanceCm", 10.0);
+        intakeCommand.execute();
+        near(intake.getRequestedPower(), IntakeConstants.activePower, "LB release restores LT intake");
+        near(power[0], TransitConstants.forwardPower, "LB release restores LT transit power");
+        check(intake.getBallCount() == 2, "LB release preserves ball count");
+        gamepad.left_trigger = 0.0f;
+        intakeCommand.execute();
+        near(intake.getRequestedPower(), 0.0, "LB release stops intake when no other request is held");
+        near(power[0], 0.0, "LB release stops transit without LT or RT");
+        intake.setReverseRequested(true);
+        intake.stop();
+        intake.periodic();
+        near(intake.getRequestedPower(), 0.0, "stop clears LB reverse request");
+        set(intake, Intake.class, "distanceCm", 10.0);
+        gamepad.right_bumper = true;
+        gamepad.left_bumper = true;
+        intake.setReverseRequested(true);
+        intakeCommand.execute();
+        near(intake.getRequestedPower(), IntakeConstants.jamPower, "RB reverses intake during normal driving");
+        near(power[0], TransitConstants.reversePower, "RB reverses transit during normal driving");
+        gamepad.right_bumper = false;
+        gamepad.left_bumper = false;
+        intake.setReverseRequested(false);
+        intakeCommand.execute();
+        check(intake.getBallCount() == 0, "RB release retains unjam ball-count reset");
+        near(power[0], 0.0, "RB release stops transit without LT");
 
         ShootAssistCommand command = new ShootAssistCommand(
                 drive, shooter, intake, transit, vision, aim, inputs, practice.isAutoAimEnabled());
@@ -158,16 +224,56 @@ public class PracticeBlueCheck {
         near(shooter.getPitchPosition(), 0.3, "distance-adaptive pitch");
         check(aim.calls == 0, "practice never calculates automatic turn power");
         check(intake.intakeRequested, "LT intake remains available");
+        gamepad.left_trigger = 0.0f;
+        set(intake, Intake.class, "ballCount", IntakeConstants.maxBallCount);
+        command.execute();
+        near(intake.getRequestedPower(), IntakeConstants.feedPower, "RT overrides full-bin reverse without LT");
+        intake.periodic();
+        near(intake.getRequestedPower(), IntakeConstants.feedPower, "RT stays forward after sensor refresh");
         check(!command.canPrepareToFire(), "unready shooter cannot start feeding");
+        gamepad.left_bumper = true;
+        intake.setReverseRequested(true);
+        command.execute();
+        near(intake.getRequestedPower(), IntakeConstants.jamPower, "LB reverses intake while RT waits");
+        near(power[0], 0.4, "LB runs transit forward while RT waits");
+        check(transit.getState() == Transit.TransitState.CLOSE, "LB preserves the waiting gate position");
+        gamepad.left_bumper = false;
+        intake.setReverseRequested(false);
+        command.execute();
+        near(power[0], 0.0, "LB release restores waiting transit stop");
         ready(shooter);
         command.execute();
         check(command.canPrepareToFire(), "practice can fire without aim lock");
         check(transit.getFiringState() == Transit.FiringState.REVERSING, "shared reverse sequence begins");
         near(power[0], -0.5, "shared reverse power");
+        gamepad.left_bumper = true;
+        intake.setReverseRequested(true);
+        command.execute();
+        near(power[0], 0.4, "LB overrides the RT reverse pulse");
+        gamepad.left_bumper = false;
+        intake.setReverseRequested(false);
+        command.execute();
+        near(power[0], -0.5, "LB release restores the RT reverse pulse");
         timer.time = 0.201;
         command.execute();
         check(command.canFire(), "shared sequence reaches feeding");
-        near(power[0], TransitConstants.forwardPower, "shared forward power");
+        near(power[0], TransitConstants.feedPower, "shooting uses separate feed power");
+
+        gamepad.left_bumper = true;
+        intake.setReverseRequested(true);
+        command.execute();
+        near(intake.getRequestedPower(), IntakeConstants.jamPower, "LB overrides RT intake forward");
+        near(power[0], 0.4, "LB overrides shooting transit power");
+        transit.periodic();
+        near(power[0], 0.4, "LB transit power survives periodic refresh");
+        check(command.canFire(), "LB preserves the shooting feed state");
+        intake.periodic();
+        near(intake.getRequestedPower(), IntakeConstants.jamPower, "LB stays reversed during RT sensor refresh");
+        gamepad.left_bumper = false;
+        intake.setReverseRequested(false);
+        command.execute();
+        near(intake.getRequestedPower(), IntakeConstants.feedPower, "LB release restores RT intake forward");
+        near(power[0], TransitConstants.feedPower, "LB release restores RT feed power");
 
         gamepad.left_stick_y = gamepad.left_stick_x = gamepad.right_stick_x = 0.0f;
         command.execute();
@@ -175,31 +281,42 @@ public class PracticeBlueCheck {
         near(drive.turn, 0.0, "neutral stick has no auto turn despite 90-degree aim error");
         vision.valid = false;
         command.execute();
+        near(intake.getRequestedPower(), IntakeConstants.feedPower, "RT intake stays forward while aim is invalid");
         check(!shooter.hasTargetVelocity(), "invalid distance cancels PID target");
         check(!command.canFire(), "invalid distance cancels committed feeding");
         check(transit.getState() == Transit.TransitState.CLOSE, "invalid distance closes gate");
         gamepad.right_stick_x = 0.3f;
         command.execute();
         near(drive.turn, 0.3, "manual steering still works without vision");
+        gamepad.right_bumper = true;
         gamepad.left_bumper = true;
+        intake.setReverseRequested(true);
         command.execute();
-        near(power[0], TransitConstants.reversePower, "LB unjam remains available");
-        near(shooter.getLeftPower(), 0.0, "LB stops shooter");
+        near(power[0], TransitConstants.reversePower, "RB unjam remains available");
+        near(intake.getRequestedPower(), IntakeConstants.jamPower, "RB overrides RT intake forward");
+        near(shooter.getLeftPower(), 0.0, "RB stops shooter");
         command.end(true);
+        near(intake.getRequestedPower(), 0.0, "command cancellation stops intake");
+        gamepad.right_bumper = false;
+        gamepad.left_bumper = false;
+        intake.setReverseRequested(false);
+        intake.updateInputs(false, false);
+        intake.periodic();
+        near(intake.getRequestedPower(), 0.0, "RT release clears shooting override");
         near(power[0], 0.0, "command cancellation stops transit");
         near(drive.turn, 0.0, "command cancellation stops drive");
         check(transit.getState() == Transit.TransitState.CLOSE, "command cancellation closes gate");
         check(intake.cleared > 0, "completed gate cycle clears ball count");
 
         vision.valid = true;
-        gamepad.left_bumper = false;
+        gamepad.right_bumper = false;
         gamepad.left_stick_y = -0.5f;
         ShootAssistCommand normal = new ShootAssistCommand(drive, shooter, intake, transit, vision, aim, inputs);
         normal.initialize();
         normal.execute();
         ready(shooter);
         normal.execute();
-        check(!drive.fieldCentric, "normal Blue/Red retain original RT drive mode");
+        check(drive.fieldCentric, "normal Blue/Red keep headless translation during RT");
         near(drive.turn, 0.123, "normal Blue/Red retain automatic turn output");
         check(aim.calls > 0, "normal constructor still calculates auto aim");
         check(!normal.canPrepareToFire(), "normal Blue/Red still require aim lock");

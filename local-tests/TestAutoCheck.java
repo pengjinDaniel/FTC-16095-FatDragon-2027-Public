@@ -103,6 +103,9 @@ public class TestAutoCheck {
         frame(vision, robot, 30);
         target.update(robot);
         double distance = target.getDistanceCm();
+        close(distance, DistanceUnit.INCH.toCm(Math.hypot(
+                -13.1064522228 - (robot.x() - 72.0), -12.75 - (robot.y() - 72.0))),
+                "autonomous uses the same four-tag-center shot distance");
         Method clear = Vision.class.getDeclaredMethod("clearCurrentFrame");
         clear.setAccessible(true);
         clear.invoke(vision);

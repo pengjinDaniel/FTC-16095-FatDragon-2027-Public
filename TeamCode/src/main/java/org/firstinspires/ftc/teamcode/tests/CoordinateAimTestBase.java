@@ -92,12 +92,16 @@ public abstract class CoordinateAimTestBase extends OpMode {
             turnPower = 0.0;
             drive.stop();
         } else if (aimRequested) {
-            if (manualTranslation) {
+            if (vision.wasCorrectionApplied()) {
+                autoAim.reset();
+                positionHold.reset();
+            }
+            if (manualTranslation || !vision.isAimCalibrationReady()) {
                 positionHold.reset();
             } else {
                 positionHold.update(
                         drive.getPose(),
-                        drive.getPinpointStatus(),
+                        drive.isFieldPoseInitialized(),
                         drive.getTranslationSpeedInchesPerSecond()
                 );
                 forward = positionHold.getForwardPower();
@@ -107,7 +111,11 @@ public abstract class CoordinateAimTestBase extends OpMode {
                     vision.hasValidAimingTarget(),
                     vision.getYawErrorDegrees()
             );
-            drive.moveRobot(forward, strafe, turnPower);
+            if (manualTranslation) {
+                drive.moveFieldCentric(forward, strafe, turnPower);
+            } else {
+                drive.moveRobot(forward, strafe, turnPower);
+            }
         } else {
             autoAim.reset();
             positionHold.reset();
@@ -139,11 +147,12 @@ public abstract class CoordinateAimTestBase extends OpMode {
         Pose2D pose = drive.getPose();
         String selectedCell = vision.getSelectedCluster().map(Enum::name).orElse("NONE");
         String controlMode = !started ? "INIT" : stopLatched ? "STOPPED"
-                : aimRequested ? "AIMING" : "MANUAL";
+                : aimRequested ? (vision.isAimCalibrationReady() ? "AIMING" : "WAITING_FOR_POSE") : "MANUAL";
 
-        telemetry.addLine("RT: aim | Release RT: calibrate | B: stop | L3: reset forward");
+        telemetry.addLine("RT: aim with calibration paused | Release RT: 3 stable frames, 1.5 s after success | B: stop | L3: reset forward");
         telemetry.addData("Control Mode", controlMode);
         telemetry.addData("Target Status", vision.getTargetStatus());
+        telemetry.addData("RT Calibration", vision.getRtCalibrationStatus());
         telemetry.addData("Pinpoint X/Y/H (in / deg)", "%.1f, %.1f / %+.1f",
                 pose.getX(DistanceUnit.INCH), pose.getY(DistanceUnit.INCH),
                 pose.getHeading(AngleUnit.DEGREES));
@@ -159,7 +168,7 @@ public abstract class CoordinateAimTestBase extends OpMode {
         telemetry.addData("Aim PIDF", "%.3f / %.3f / %.3f / %.3f",
                 DriveConstants.autoAimKp, DriveConstants.autoAimKi,
                 DriveConstants.autoAimKd, DriveConstants.autoAimKf);
-        telemetry.addData("Aim Locked", autoAim.isLocked());
+        telemetry.addData("Aim Locked", vision.isAimCalibrationReady() && autoAim.isLocked());
         telemetry.addData("Calibration / Wait (s)", "%s / %.1f",
                 vision.getCalibrationStatus(), vision.getCalibrationCooldownRemainingSeconds());
         telemetry.update();
@@ -179,7 +188,7 @@ public abstract class CoordinateAimTestBase extends OpMode {
             packet.put("selectedCell", selectedCell);
             packet.put("desiredHeadingDeg", vision.getDesiredHeadingDegrees());
             packet.put("aimRequested", aimRequested);
-            packet.put("aimLocked", autoAim.isLocked());
+            packet.put("aimLocked", vision.isAimCalibrationReady() && autoAim.isLocked());
             packet.put("validAimTarget", vision.hasValidAimingTarget());
             packet.put("visionCalibrationStatus", vision.getCalibrationStatus());
             packet.put("visionCalibrationCooldownSec", vision.getCalibrationCooldownRemainingSeconds());

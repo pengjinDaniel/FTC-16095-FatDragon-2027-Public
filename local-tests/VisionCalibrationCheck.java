@@ -1,15 +1,15 @@
 package org.firstinspires.ftc.teamcode.subsystems.vision;
 
-import com.qualcomm.hardware.gobilda.GoBildaPinpointDriver;
 import java.lang.reflect.Field;
 import java.util.Collections;
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.Pose2D;
 import org.firstinspires.ftc.teamcode.subsystems.drive.Drive;
+import org.firstinspires.ftc.teamcode.subsystems.drive.DriveConstants;
 import sun.misc.Unsafe;
 
-/** Exercises the production calibration policy and Pinpoint writes without robot hardware. */
+/** Exercises direct pose writes, metadata rejection and odometry/headless continuation. */
 public class VisionCalibrationCheck {
     private static int checks;
     private static final Unsafe ALLOCATOR = allocator();
@@ -29,6 +29,11 @@ public class VisionCalibrationCheck {
         if (!condition) throw new AssertionError(message);
     }
 
+    private static void close(double actual, double expected, String message) {
+        check(Double.isFinite(actual) && Math.abs(actual - expected) < 1e-6,
+                message + ": expected " + expected + ", got " + actual);
+    }
+
     private static void set(Object target, Class<?> owner, String name, Object value) throws Exception {
         Field field = owner.getDeclaredField(name);
         field.setAccessible(true);
@@ -39,183 +44,277 @@ public class VisionCalibrationCheck {
         return new Pose2D(DistanceUnit.CM, xCm, yCm, AngleUnit.DEGREES, heading);
     }
 
-    public static class FakePinpoint extends GoBildaPinpointDriver {
+    public static class FakePinpoint extends com.qualcomm.hardware.gobilda.GoBildaPinpointDriver {
         Pose2D position;
         DeviceStatus status;
         int writes;
-
-        private FakePinpoint() { super(null, false); }
+        double velX, velY, headingVelocity;
+        FakePinpoint() { super(null, false); }
         @Override public DeviceStatus getDeviceStatus() { return status; }
         @Override public Pose2D getPosition() { return position; }
         @Override public double getHeading(AngleUnit unit) { return position.getHeading(unit); }
-        @Override public void setPosition(Pose2D candidate) { position = candidate; writes++; }
+        @Override public void setPosition(Pose2D value) { position = value; writes++; }
         @Override public void update() { }
+        @Override public double getVelX(DistanceUnit unit) { return unit.fromMm(DistanceUnit.INCH.toMm(velX)); }
+        @Override public double getVelY(DistanceUnit unit) { return unit.fromMm(DistanceUnit.INCH.toMm(velY)); }
+        @Override public double getHeadingVelocity(
+                org.firstinspires.ftc.robotcore.external.navigation.UnnormalizedAngleUnit unit) {
+            return unit.fromDegrees(headingVelocity);
+        }
     }
 
-    private static class Samples {
-        final Vision vision;
-        final Drive drive;
-        final FakePinpoint pinpoint;
-        double timestamp;
+    private static final class Samples {
+        final Vision vision = (Vision) ALLOCATOR.allocateInstance(Vision.class);
+        final Drive drive = (Drive) ALLOCATOR.allocateInstance(Drive.class);
+        final FakePinpoint pinpoint = (FakePinpoint) ALLOCATOR.allocateInstance(FakePinpoint.class);
 
         Samples() throws Exception {
-            vision = (Vision) ALLOCATOR.allocateInstance(Vision.class);
-            drive = (Drive) ALLOCATOR.allocateInstance(Drive.class);
-            pinpoint = (FakePinpoint) ALLOCATOR.allocateInstance(FakePinpoint.class);
             pinpoint.position = pose(0, 0, 0);
-            pinpoint.status = GoBildaPinpointDriver.DeviceStatus.READY;
+            pinpoint.status = com.qualcomm.hardware.gobilda.GoBildaPinpointDriver.DeviceStatus.READY;
             set(drive, Drive.class, "pinpoint", pinpoint);
             set(drive, Drive.class, "driverHeadingReferenceRadians", Double.NaN);
             set(drive, Drive.class, "lastVisionTimestamp", Double.NaN);
-            set(drive, Drive.class, "lastAcceptedVisionTimestamp", Double.NaN);
             set(vision, Vision.class, "alliance", Alliance.BLUE);
             set(vision, Vision.class, "observedClusterStates", Collections.emptyMap());
         }
 
-        void prepare(double xCm, double yCm, double heading) throws Exception {
-            set(vision, Vision.class, "correctedRobotFieldPose", pose(xCm, yCm, heading));
-            set(vision, Vision.class, "frameTimestamp", ++timestamp);
+        void prepare(Pose2D pose, double timestamp) throws Exception {
+            VisionMath.HiveSolveResult result = new VisionMath.HiveSolveResult();
+            result.correction = new VisionMath.HiveCorrection(pose, -30, 0);
+            result.candidates[0] = result.correction;
+            result.usableCandidateCount = 1;
+            result.status = "Synthetic Limelight field pose";
+            set(vision, Vision.class, "hiveSolveResult", result);
+            set(vision, Vision.class, "frameTimestamp", timestamp);
         }
 
-        void frame(double xCm, double yCm, double heading, boolean allowed, long now)
-                throws Exception {
-            prepare(xCm, yCm, heading);
+        void frame(Pose2D pose, double timestamp, boolean allowed, long now) throws Exception {
+            prepare(pose, timestamp);
             vision.updateFieldTarget(drive, allowed, now);
         }
 
         void missingFrame(long now) throws Exception {
+            set(vision, Vision.class, "hiveSolveResult", null);
             set(vision, Vision.class, "correctedRobotFieldPose", null);
+            set(vision, Vision.class, "poseStatus", "No AprilTag detections");
             set(vision, Vision.class, "frameTimestamp", Double.NaN);
-            vision.updateFieldTarget(drive, true, now);
+            vision.updateFieldTarget(drive, false, now);
+        }
+    }
+
+    private static class CaptureDrive extends Drive {
+        double forward, strafe, turn;
+        CaptureDrive() { super(null); }
+        @Override public void moveRobot(double forward, double strafe, double turn) {
+            this.forward = forward;
+            this.strafe = strafe;
+            this.turn = turn;
+        }
+    }
+
+
+    private static class Camera extends com.qualcomm.hardware.limelightvision.Limelight3A {
+        com.qualcomm.hardware.limelightvision.LLResult result;
+        Camera() { super(null, "test", null); }
+        @Override public boolean isConnected() { return true; }
+        @Override public com.qualcomm.hardware.limelightvision.LLResult getLatestResult() { return result; }
+    }
+
+    private static class Tag extends com.qualcomm.hardware.limelightvision.LLResultTypes.FiducialResult {
+        double area;
+        Tag() throws Exception { super(null); }
+        @Override public int getFiducialId() { return 38; }
+        @Override public double getTargetArea() { return area; }
+        @Override public org.firstinspires.ftc.robotcore.external.navigation.Pose3D getTargetPoseRobotSpace() {
+            return null;
+        }
+    }
+
+    private static class Frame extends com.qualcomm.hardware.limelightvision.LLResult {
+        int count;
+        Tag tag;
+        Frame() throws Exception { super(null); }
+        @Override public int getPipelineIndex() { return 0; }
+        @Override public long getStaleness() { return 0; }
+        @Override public boolean isValid() { return true; }
+        @Override public double getTimestamp() { return 1; }
+        @Override public double getBotposeAvgDist() { return 0; }
+        @Override public double getBotposeSpan() { return 0; }
+        @Override public double getBotposeAvgArea() { return 0; }
+        @Override public double[] getStddevMt1() { return null; }
+        @Override public java.util.List<com.qualcomm.hardware.limelightvision.LLResultTypes.FiducialResult>
+                getFiducialResults() { return Collections.singletonList(tag); }
+        @Override public int getBotposeTagCount() { return count; }
+        @Override public org.firstinspires.ftc.robotcore.external.navigation.Pose3D getBotpose() {
+            // Real SDK fallback when the JSON botpose array is absent.
+            return createPose3DRobot(new double[0]);
+        }
+    }
+
+    private static void checkEmptyPoseMetadata() throws Exception {
+        int minimum = VisionConstants.minimumBotposeTagCount;
+        try {
+            VisionConstants.minimumBotposeTagCount = 0;
+            for (boolean missingLocalization : new boolean[]{true, false}) {
+                Samples samples = new Samples();
+                Camera camera = (Camera) ALLOCATOR.allocateInstance(Camera.class);
+                Frame frame = (Frame) ALLOCATOR.allocateInstance(Frame.class);
+                Tag tag = (Tag) ALLOCATOR.allocateInstance(Tag.class);
+                frame.count = missingLocalization ? 0 : 1;
+                tag.area = missingLocalization ? 1 : 0;
+                frame.tag = tag;
+                camera.result = frame;
+                set(samples.vision, Vision.class, "limelight", camera);
+                samples.vision.update();
+                samples.vision.updateAimTarget(samples.drive, false);
+                check(!samples.drive.isFieldPoseInitialized() && !samples.vision.hasValidAimingTarget(),
+                        "zero minimum must not turn absent botpose metadata into a valid origin");
+            }
+        } finally {
+            VisionConstants.minimumBotposeTagCount = minimum;
         }
     }
 
     public static void main(String[] args) throws Exception {
+        checkEmptyPoseMetadata();
+        Samples empty = new Samples();
+        empty.drive.periodic();
+        check(!empty.drive.isFieldPoseInitialized(), "READY odometry alone cannot establish field coordinates");
+        check(Double.isNaN(empty.drive.getPose().getX(DistanceUnit.CM)),
+                "uninitialized odometry is never reported as field origin");
+        close(VisionConstants.calibrationIntervalSeconds, 1.5, "production waits 1.5 seconds after success");
+
         for (boolean stopped : new boolean[]{false, true}) {
-            for (boolean rt : new boolean[]{false, true}) {
-                Samples sample = new Samples();
-                Pose2D previous = sample.pinpoint.position;
-                sample.prepare(100, 200, 90);
-                sample.vision.updateAimTarget(sample.drive, stopped, rt);
-                boolean expected = !stopped && !rt;
-                check(sample.pinpoint.writes == (expected ? 1 : 0),
-                        "RT and B block writes; otherwise calibration is automatic");
-                check(sample.drive.isFieldPoseInitialized() == expected,
-                        "RT exclusion also applies before field initialization");
-                if (!expected) {
-                    check(sample.pinpoint.position == previous, "blocked calibration preserves XYH");
-                }
+            Samples sample = new Samples();
+            for (int i = 0; i < 3; i++) {
+                sample.prepare(pose(-100, 34, 180), i + 1);
+                sample.vision.updateAimTarget(sample.drive, stopped);
             }
+            boolean permitted = !stopped;
+            check(sample.drive.isFieldPoseInitialized() == permitted, "B stop pauses the stable calibration path");
+            check(sample.pinpoint.writes == (permitted ? 1 : 0), "three permitted frames write exactly once");
+            check(sample.vision.hasValidAimingTarget() == permitted, "aiming waits for field initialization");
         }
 
-        Samples normal = new Samples();
-        normal.frame(200, -30, 90, true, 0);
-        check(normal.pinpoint.writes == 1 && normal.drive.isFieldPoseInitialized(),
-                "the first valid vision pose initializes an arbitrary field location");
-        Pose2D initial = normal.pinpoint.position;
-        normal.frame(201, -29, 91, true, 1_499_999_999L);
-        check(normal.pinpoint.writes == 1 && normal.pinpoint.position == initial,
-                "one nanosecond before 1.5 seconds, XYH remains untouched");
-        check(normal.vision.getCalibrationCooldownRemainingSeconds() > 0,
-                "success cooldown remains active before the deadline");
-        normal.frame(201, -29, 91, true, 1_500_000_000L);
-        check(normal.pinpoint.writes == 2, "exactly 1.5 seconds permits the next correction");
-        normal.vision.updateFieldTarget(normal.drive, true, 3_000_000_000L);
-        check(normal.pinpoint.writes == 2, "a repeated physical frame cannot write twice");
-        check(normal.vision.getCalibrationCooldownRemainingSeconds() == 0,
-                "a duplicate frame does not restart the success cooldown");
-        normal.frame(202, -28, 92, true, 3_000_000_001L);
-        check(normal.pinpoint.writes == 3, "the next distinct frame retries immediately");
-        normal.frame(203, -27, 93, false, 3_200_000_000L);
-        normal.frame(203, -27, 93, false, 5_000_000_000L);
-        check(normal.pinpoint.writes == 3, "paused calibration never writes");
-        normal.frame(203, -27, 93, true, 5_000_000_001L);
-        check(normal.pinpoint.writes == 4, "elapsed cooldown does not restart on RT release");
-
-        Samples retry = new Samples();
-        retry.frame(100, 100, -30, true, 0);
-        Pose2D previous = retry.pinpoint.position;
-        retry.frame(131, 100, -30, true, 1_500_000_000L);
-        check(retry.pinpoint.writes == 1 && retry.pinpoint.position == previous,
-                "an out-of-gate frame never overwrites existing XYH");
-        check(!retry.vision.isCorrectedPoseAccepted(), "a rejected frame is not visually accepted");
-        check(retry.vision.getCalibrationCooldownRemainingSeconds() == 0,
-                "a failed correction starts no cooldown");
-        retry.frame(129.9, 100, -10.1, true, 1_500_000_001L);
-        check(retry.pinpoint.writes == 2, "a failed correction retries on the very next fresh frame");
-
-        for (double[] candidate : new double[][]{
-                {29.999, 0, 19.999, 1},
-                {30, 0, 0, 0},
-                {30.001, 0, 0, 0},
-                {0, 0, 20, 0},
-                {0, 0, 20.001, 0},
-                {22, 22, 0, 0},
-                {20, 20, 0, 1},
-                {-29.999, 0, -19.999, 1},
-                {0, -30, 0, 0},
-                {0, 0, -20, 0}}) {
-            Samples boundary = new Samples();
-            boundary.frame(0, 0, 0, true, 0);
-            Pose2D before = boundary.pinpoint.position;
-            boundary.frame(candidate[0], candidate[1], candidate[2], true, 1_500_000_000L);
-            boolean accepted = candidate[3] == 1;
-            check(boundary.pinpoint.writes == (accepted ? 2 : 1),
-                    "strict 30 cm / 20 degree boundary: " + java.util.Arrays.toString(candidate));
-            if (!accepted) {
-                check(boundary.pinpoint.position == before, "rejection preserves every XYH component");
-            }
+        Samples direct = new Samples();
+        check(direct.drive.updateVisionPose(pose(100, 40, 0), 1, 0), "Drive accepts a finite external pose");
+        check(direct.drive.isFieldPoseInitialized(), "successful external write establishes the field frame");
+        double positionGate = DriveConstants.maximumVisionPositionDifferenceInches;
+        double headingGate = DriveConstants.maximumVisionHeadingDifferenceDegrees;
+        try {
+            DriveConstants.maximumVisionPositionDifferenceInches = 0;
+            DriveConstants.maximumVisionHeadingDifferenceDegrees = 0;
+            check(direct.drive.updateVisionPose(pose(-1000, 500, -90), 2, 1),
+                    "Drive writes a large field-frame correction without a disagreement gate");
+            close(direct.drive.getPose().getX(DistanceUnit.CM), -1000, "external X is applied");
+            close(direct.drive.getPose().getHeading(AngleUnit.DEGREES), -90, "external heading is applied");
+        } finally {
+            DriveConstants.maximumVisionPositionDifferenceInches = positionGate;
+            DriveConstants.maximumVisionHeadingDifferenceDegrees = headingGate;
         }
-
-        Samples jumps = new Samples();
-        jumps.frame(0, 0, 0, true, 0);
-        Pose2D beforeJumps = jumps.pinpoint.position;
-        for (int i = 1; i <= 20; i++) {
-            jumps.frame(100, 100, 90, true, 1_500_000_000L + i);
-            check(jumps.pinpoint.writes == 1 && jumps.pinpoint.position == beforeJumps,
-                    "repeated rejected frames must never force a Pinpoint write");
-        }
-        check(jumps.drive.getRejectedVisionFrameCount() == 20,
-                "distinct rejected frames are counted without an override");
-        jumps.vision.updateFieldTarget(jumps.drive, true, 1_500_000_030L);
-        check(jumps.drive.getRejectedVisionFrameCount() == 20,
-                "a duplicate rejected frame cannot advance the counter");
-        jumps.frame(1, 1, 1, true, 1_500_000_031L);
-        check(jumps.pinpoint.writes == 2, "a valid frame immediately recovers after many rejections");
-
-        Samples wrapped = new Samples();
-        wrapped.frame(0, 0, 179, true, 0);
-        wrapped.frame(0, 0, -179, true, 1_500_000_000L);
-        check(wrapped.pinpoint.writes == 2, "heading wrap uses the shortest two-degree difference");
-        wrapped.frame(0, 0, -159, true, 3_000_000_000L);
-        check(wrapped.pinpoint.writes == 2, "exactly twenty degrees is rejected after heading wrap");
-
-        Samples missing = new Samples();
-        missing.frame(100, 100, 45, true, 0);
-        missing.missingFrame(1_500_000_000L);
-        check(missing.pinpoint.writes == 1 && missing.vision.hasValidAimingTarget(),
-                "missing vision preserves Pinpoint and coordinate aiming");
-        missing.frame(101, 100, 46, true, 1_500_000_001L);
-        check(missing.pinpoint.writes == 2, "missing vision adds no retry delay");
-
-        Samples invalid = new Samples();
-        Pose2D beforeInvalid = invalid.pinpoint.position;
-        invalid.frame(Double.NaN, 0, 0, true, 0);
-        check(invalid.pinpoint.writes == 0 && invalid.pinpoint.position == beforeInvalid,
-                "a nonfinite pose cannot overwrite uninitialized odometry");
-        check(invalid.vision.getCalibrationCooldownRemainingSeconds() == 0,
-                "failed initialization starts no cooldown");
-        invalid.frame(150, -100, 45, true, 1);
-        check(invalid.pinpoint.writes == 1, "a valid frame can initialize immediately after failure");
-        invalid.pinpoint.status = GoBildaPinpointDriver.DeviceStatus.CALIBRATING;
-        invalid.frame(151, -100, 46, true, 1_500_000_001L);
-        check(invalid.pinpoint.writes == 1 && !invalid.vision.hasValidAimingTarget(),
-                "Pinpoint not READY blocks writes and aiming");
-        invalid.pinpoint.status = GoBildaPinpointDriver.DeviceStatus.READY;
-        invalid.frame(151, -100, 46, true, 1_500_000_002L);
-        check(invalid.pinpoint.writes == 2, "READY recovery retries without a failure cooldown");
-
+        check(!direct.drive.updateVisionPose(pose(0, 0, 0), 2, 2), "the same physical frame cannot write twice");
+        check(!direct.drive.updateVisionPose(pose(Double.NaN, 0, 0), 3, 3),
+                "nonfinite external poses cannot overwrite valid odometry");
+        check(direct.pinpoint.writes == 2, "rejected external writes leave the hardware write count unchanged");
+        direct.pinpoint.velX = 3;
+        direct.pinpoint.velY = 4;
+        direct.pinpoint.headingVelocity = -20;
+        close(direct.drive.getTranslationSpeedInchesPerSecond(), 5, "translation speed comes from odometry");
+        close(direct.drive.getHeadingVelocityDegreesPerSecond(), -20, "rotation telemetry comes from Pinpoint IMU");
+        direct.pinpoint.status = com.qualcomm.hardware.gobilda.GoBildaPinpointDriver.DeviceStatus.CALIBRATING;
+        direct.drive.periodic();
+        check(!direct.drive.isFieldPoseInitialized(), "Pinpoint fault invalidates the field registration");
+        check(!direct.drive.updateVisionPose(pose(0, 0, 0), 3, 4), "an unavailable Pinpoint rejects external writes");
+        direct.pinpoint.status = com.qualcomm.hardware.gobilda.GoBildaPinpointDriver.DeviceStatus.READY;
+        check(direct.drive.updateVisionPose(pose(0, 0, 180), 3, 5), "a ready Pinpoint can establish a new field frame");
+        checkHeadlessAndTagLossShooting();
         System.out.println("PASS VisionCalibrationCheck: " + checks
-                + " production RT, cooldown, strict gate and no-overwrite assertions");
+                + " direct overwrite, metadata, field registration, headless and tag-loss assertions");
     }
+
+    private static class ReadyShooter extends org.firstinspires.ftc.teamcode.subsystems.shooter.Shooter {
+        double distance;
+        ReadyShooter() { super(null); }
+        @Override public boolean setDistanceTarget(double cm) { distance = cm; return Double.isFinite(cm); }
+        @Override public boolean isReady() { return true; }
+        @Override public boolean isPitchReady() { return true; }
+    }
+
+    private static class QuietIntake extends org.firstinspires.ftc.teamcode.subsystems.intake.Intake {
+        QuietIntake() { super(null); }
+        @Override public void updateInputs(boolean requested, boolean jam, boolean shoot) { }
+    }
+
+    private static class ReadyTransit extends org.firstinspires.ftc.teamcode.subsystems.transit.Transit {
+        boolean feedRequested;
+        ReadyTransit() { super(null); }
+        @Override public void requestFeed(boolean permitted) { feedRequested = permitted; }
+    }
+
+    private static class LockedAim extends org.firstinspires.ftc.teamcode.subsystems.drive.AutoAimController {
+        @Override public double calculateTurnPower(boolean valid, double error) { return valid ? .123 : 0; }
+        @Override public boolean isLocked() { return true; }
+    }
+
+    private static void checkHeadlessAndTagLossShooting() throws Exception {
+        Samples sample = new Samples();
+        CaptureDrive drive = (CaptureDrive) ALLOCATOR.allocateInstance(CaptureDrive.class);
+        set(drive, Drive.class, "pinpoint", sample.pinpoint);
+        set(drive, Drive.class, "driverHeadingReferenceRadians", Double.NaN);
+        set(drive, Drive.class, "lastVisionTimestamp", Double.NaN);
+        drive.periodic();
+        sample.pinpoint.position = pose(0, 0, 90);
+        drive.moveFieldCentric(1, 0, 0);
+        close(drive.forward, 0, "headless driving is available before the first visual field fix");
+        close(drive.strafe, 1, "pre-initialization headless driving uses the IMU");
+        check(!drive.isFieldPoseInitialized(), "IMU headless driving does not initialize field coordinates");
+        drive.resetDriverHeading();
+        close(drive.getDriverHeadingRadians(), 0, "START can reset forward before tags are visible");
+        sample.pinpoint.position = pose(0, 0, 0);
+        drive.resetDriverHeading();
+        drive.updateVisionPose(pose(100, 40, 0), 1, 0);
+        ReadyShooter shooter = (ReadyShooter) ALLOCATOR.allocateInstance(ReadyShooter.class);
+        QuietIntake intake = (QuietIntake) ALLOCATOR.allocateInstance(QuietIntake.class);
+        ReadyTransit transit = (ReadyTransit) ALLOCATOR.allocateInstance(ReadyTransit.class);
+        com.qualcomm.robotcore.hardware.Gamepad gamepad =
+                (com.qualcomm.robotcore.hardware.Gamepad) ALLOCATOR.allocateInstance(
+                        com.qualcomm.robotcore.hardware.Gamepad.class);
+        com.arcrobotics.ftclib.gamepad.GamepadEx inputs = new com.arcrobotics.ftclib.gamepad.GamepadEx(gamepad);
+        org.firstinspires.ftc.teamcode.commands.ShootAssistCommand command =
+                new org.firstinspires.ftc.teamcode.commands.ShootAssistCommand(
+                        drive, shooter, intake, transit, sample.vision, new LockedAim(), inputs);
+        sample.prepare(pose(100, 40, 0), 2);
+        sample.vision.updateFieldTarget(drive, false, 0);
+        java.lang.reflect.Method clear = Vision.class.getDeclaredMethod("clearCurrentFrame");
+        clear.setAccessible(true);
+        clear.invoke(sample.vision);
+        for (double heading : new double[]{0, 90, 180, -90}) {
+            sample.pinpoint.position = pose(100, 40, heading);
+            sample.vision.updateFieldTarget(drive, false, 1);
+            for (float[] stick : new float[][]{{-.5f, 0}, {.5f, 0}, {0, -.5f}, {0, .5f}}) {
+                gamepad.left_stick_y = stick[0];
+                gamepad.left_stick_x = stick[1];
+                drive.moveFieldCentric(inputs.getLeftY(), inputs.getLeftX(), .123);
+                double expectedForward = drive.forward;
+                double expectedStrafe = drive.strafe;
+                command.execute();
+                close(drive.forward, expectedForward, "RT forward uses the normal headless frame");
+                close(drive.strafe, expectedStrafe, "RT strafe uses the normal headless frame");
+                close(drive.turn, .123, "headless translation preserves automatic turn output");
+                check(transit.feedRequested && Double.isFinite(shooter.distance),
+                        "real shoot-assist control remains ready through tag loss");
+            }
+        }
+        sample.pinpoint.position = pose(100, 40, 90);
+        close(drive.getDriverHeadingRadians(), Math.PI / 2, "headless follows real IMU rotation");
+        drive.updateVisionPose(pose(100, 40, -90), 3, 2_000_000_000L);
+        close(drive.getDriverHeadingRadians(), Math.PI / 2, "vision overwrite cannot rotate the driver reference");
+        drive.resetDriverHeading();
+        close(drive.getDriverHeadingRadians(), 0, "L3 resets the headless forward direction");
+        drive.clearVisionPose("Pinpoint unavailable");
+        drive.moveFieldCentric(.6, -.4, .1);
+        close(drive.forward, .6, "manual drive remains available before visual field initialization");
+        close(drive.strafe, -.4, "missing heading uses robot-relative manual fallback");
+    }
+
 }

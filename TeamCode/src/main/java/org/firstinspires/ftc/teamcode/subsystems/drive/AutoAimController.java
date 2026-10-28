@@ -14,6 +14,35 @@ public class AutoAimController {
     private boolean locked;
     private long withinToleranceSinceNanos = -1;
     private double rawTurnPower;
+    private double acquisitionTurnDirection;
+
+    public double calculateTurnPower(boolean hasValidTarget, double yawErrorDegrees,
+                                     boolean calibrationReady) {
+        if (calibrationReady) {
+            if (acquisitionTurnDirection != 0.0) reset();
+            return calculateTurnPower(hasValidTarget, yawErrorDegrees);
+        }
+        double limit = getEffectiveMaxTurnPower();
+        double power = DriveConstants.autoAimAcquisitionTurnPower;
+        double steeringGain = DriveConstants.autoAimKp + DriveConstants.autoAimKf;
+        double turnSign = DriveConstants.autoAimYawToTurnSign;
+        if (!hasValidTarget || !Double.isFinite(yawErrorDegrees)
+                || !Double.isFinite(power) || power <= 0.0 || power > 1.0
+                || !Double.isFinite(steeringGain) || steeringGain == 0.0
+                || !Double.isFinite(turnSign) || turnSign == 0.0 || limit <= 0.0) {
+            reset();
+            return 0.0;
+        }
+        locked = false;
+        withinToleranceSinceNanos = -1;
+        if (acquisitionTurnDirection == 0.0) {
+            // The old pose supplies only a direction; its error never controls search speed.
+            acquisitionTurnDirection = Math.signum(steeringGain)
+                    * Math.signum(yawErrorDegrees) * Math.signum(turnSign);
+        }
+        rawTurnPower = acquisitionTurnDirection * power;
+        return Range.clip(rawTurnPower, -limit, limit);
+    }
 
     public double calculateTurnPower(boolean hasValidTarget, double yawErrorDegrees) {
         double maxTurnPower = getEffectiveMaxTurnPower();
@@ -71,6 +100,7 @@ public class AutoAimController {
         locked = false;
         withinToleranceSinceNanos = -1;
         rawTurnPower = 0.0;
+        acquisitionTurnDirection = 0.0;
         controller.reset();
     }
 

@@ -12,6 +12,7 @@ public class IntakeConstants {
     public static String rightFlowerServoName = "rightFlowerServo";
 
     public static double activePower = 1;
+    public static double feedPower = 0.6;
     public static double fullReversePower = -1;
     public static double jamPower = -1;
     public static int maxBallCount = 4;

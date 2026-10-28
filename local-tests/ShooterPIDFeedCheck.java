@@ -1,6 +1,7 @@
 package org.firstinspires.ftc.teamcode.tests;
 
 import com.acmerobotics.dashboard.FtcDashboard;
+import com.acmerobotics.dashboard.DashboardCore;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.Gamepad;
 import com.qualcomm.robotcore.hardware.Servo;
@@ -18,7 +19,7 @@ import org.firstinspires.ftc.teamcode.subsystems.transit.Transit;
 import org.firstinspires.ftc.teamcode.subsystems.transit.TransitConstants;
 import sun.misc.Unsafe;
 
-/** Replays RT and D-pad Left through ShooterPID, with and without LT. */
+/** Replays pitch adjustment and automatic RT feeding through ShooterPID, with and without LT. */
 public class ShooterPIDFeedCheck {
     private static Unsafe allocator;
     private static int checks;
@@ -53,10 +54,16 @@ public class ShooterPIDFeedCheck {
 
     private static class TestIntake extends Intake {
         boolean requested;
+        boolean shootRequested;
+        boolean jamRequested;
         TestIntake() { super(null); }
         @Override public void periodic() {}
-        @Override public void updateInputs(boolean requested, boolean jam) { this.requested = requested; }
-        @Override public void stop() { requested = false; }
+        @Override public void updateInputs(boolean requested, boolean jam, boolean shoot) {
+            this.requested = requested;
+            shootRequested = shoot;
+            jamRequested = jam;
+        }
+        @Override public void stop() { requested = false; shootRequested = false; jamRequested = false; }
     }
 
     private static void replay(boolean lt) throws Exception {
@@ -94,21 +101,76 @@ public class ShooterPIDFeedCheck {
         set(test, ShooterPID.class, "intake", intake);
         set(test, ShooterPID.class, "shooter", shooter);
         set(test, ShooterPID.class, "transit", transit);
-        set(test, ShooterPID.class, "dashboard", allocator.allocateInstance(FtcDashboard.class));
+        FtcDashboard dashboard = (FtcDashboard) allocator.allocateInstance(FtcDashboard.class);
+        set(dashboard, FtcDashboard.class, "core", allocator.allocateInstance(DashboardCore.class));
+        set(test, ShooterPID.class, "dashboard", dashboard);
         test.gamepad1 = (Gamepad) allocator.allocateInstance(Gamepad.class);
         test.telemetry = (Telemetry) Proxy.newProxyInstance(Telemetry.class.getClassLoader(),
                 new Class<?>[]{Telemetry.class}, (proxy, method, args) ->
                         method.getReturnType() == boolean.class ? true : null);
-        test.gamepad1.right_trigger = 1.0f;
-        test.gamepad1.left_trigger = lt ? 1.0f : 0.0f;
+        test.gamepad1.dpad_right = true;
+        test.loop();
+        near(shooter.getPitchPosition(), 0.51, "D-pad Right raises pitch without RT");
+        test.loop();
+        near(shooter.getPitchPosition(), 0.51, "held D-pad Right adjusts only once");
+        test.gamepad1.dpad_right = false;
         test.gamepad1.dpad_left = true;
         test.loop();
+        near(shooter.getPitchPosition(), 0.5, "D-pad Left lowers pitch without RT");
+        test.loop();
+        near(shooter.getPitchPosition(), 0.5, "held D-pad Left adjusts only once");
+        test.gamepad1.dpad_left = false;
+        test.loop();
+        shooter.setPitchPosition(ShooterConstants.pitchMaxPosition - 0.005);
+        test.gamepad1.dpad_right = true;
+        test.loop();
+        near(shooter.getPitchPosition(), ShooterConstants.pitchMaxPosition, "pitch obeys upper limit");
+        test.gamepad1.dpad_right = false;
+        test.loop();
+        test.gamepad1.dpad_right = true;
+        test.gamepad1.dpad_left = true;
+        test.loop();
+        near(shooter.getPitchPosition(), ShooterConstants.pitchMaxPosition, "simultaneous edges cancel at limit");
+        test.gamepad1.dpad_right = false;
+        test.gamepad1.dpad_left = false;
+        test.loop();
+        shooter.setPitchPosition(ShooterConstants.pitchMinPosition + 0.005);
+        test.gamepad1.dpad_left = true;
+        test.loop();
+        near(shooter.getPitchPosition(), ShooterConstants.pitchMinPosition, "pitch obeys lower limit");
+        test.gamepad1.dpad_left = false;
+        test.loop();
+        test.gamepad1.right_bumper = true;
+        test.loop();
+        near(position[0], TransitConstants.limitOpen, "RB opens the manual gate without RT");
+        test.loop();
+        near(position[0], TransitConstants.limitOpen, "held RB toggles the manual gate only once");
+        test.gamepad1.right_bumper = false;
+        test.loop();
+        test.gamepad1.right_bumper = true;
+        test.loop();
+        near(position[0], TransitConstants.limitClosed, "next RB edge closes the manual gate");
+        test.gamepad1.right_bumper = false;
+        test.loop();
+        shooter.setPitchPosition(0.5);
+        test.gamepad1.right_trigger = 1.0f;
+        test.gamepad1.left_trigger = lt ? 1.0f : 0.0f;
+        test.gamepad1.dpad_right = true;
+        test.loop();
+        near(shooter.getPitchPosition(), 0.51, "pitch adjusts while RT is held");
+        check(transit.getFiringState() == Transit.FiringState.WAITING, "RT requests feed without A");
+        near(transit.getRequestedPower(), 0.0, "RT keeps transit stopped until ready");
+        test.gamepad1.dpad_right = false;
+        test.loop();
+        near(shooter.getPitchPosition(), 0.51, "RT does not reset adjusted pitch");
+        check(!test.gamepad1.a, "A is never required to start the RT feed sequence");
         near(position[0], TransitConstants.limitClosed, "unready gate stays closed; LT=" + lt);
         check(transit.getFiringState() == Transit.FiringState.WAITING, "request waits for readiness");
         Field status = ShooterPID.class.getDeclaredField("controlStatus");
         status.setAccessible(true);
         check(status.get(test).equals("WAITING: SHOOTER SPEED"), "specific speed-wait status");
         check(intake.requested == lt, "LT changes intake request");
+        check(intake.shootRequested, "RT requests intake forward with or without LT");
         set(shooter, Shooter.class, "withinToleranceSinceNanos", System.nanoTime() - 100_000_000L);
         set(shooter, Shooter.class, "pitchChangedAtNanos", System.nanoTime() - 1_000_000_000L);
         test.loop();
@@ -116,23 +178,69 @@ public class ShooterPIDFeedCheck {
         check(transit.getFiringState() == Transit.FiringState.REVERSING, "reverse sequence starts");
         check(status.get(test).equals("REVERSING"), "active sequence status");
         check(shooter.isReady() && shooter.isPitchReady(), "readiness stays valid");
-        test.gamepad1.dpad_left = false;
+        set(transit, Transit.class, "feedReverseTimeSeconds", 0.0);
         test.loop();
-        test.gamepad1.dpad_left = true;
+        check(transit.getFiringState() == Transit.FiringState.FEEDING, "reverse sequence reaches feed");
+        near(transit.getRequestedPower(), TransitConstants.feedPower, "RT uses separate shooting feed power");
+        test.gamepad1.a = true;
         test.loop();
-        near(position[0], TransitConstants.limitClosed, "second D-pad press cancels request");
-        check(transit.getFiringState() == Transit.FiringState.IDLE, "cancel ends feed sequence");
-        test.gamepad1.dpad_left = false;
+        check(transit.getFiringState() == Transit.FiringState.FEEDING, "A does not cancel automatic RT feeding");
+        test.gamepad1.a = false;
+        test.gamepad1.right_bumper = true;
         test.loop();
-        test.gamepad1.dpad_left = true;
-        test.loop();
-        near(position[0], TransitConstants.limitOpen, "next D-pad edge requests feeding again");
+        near(position[0], TransitConstants.limitOpen, "RT retains gate ownership while RB is pressed");
+        near(transit.getRequestedPower(), TransitConstants.feedPower, "RB does not interrupt automatic RT feed");
+        test.gamepad1.right_bumper = false;
         test.gamepad1.right_trigger = 0.0f;
         test.loop();
         near(position[0], TransitConstants.limitClosed, "RT release closes gate");
+        check(!intake.shootRequested, "RT release clears intake shooting request");
+        near(transit.getRequestedPower(), lt ? TransitConstants.forwardPower : 0.0,
+                "RT release returns transit to LT power or stop");
+        test.gamepad1.left_bumper = true;
+        test.loop();
+        check(intake.jamRequested, "LB requests intake reverse without RT");
+        near(transit.getRequestedPower(), 0.4, "LB runs transit forward without RT");
+        test.gamepad1.left_bumper = false;
+        test.loop();
+        near(transit.getRequestedPower(), lt ? TransitConstants.forwardPower : 0.0,
+                "LB release restores LT transit power or stop");
         test.gamepad1.right_trigger = 1.0f;
         test.loop();
-        near(position[0], TransitConstants.limitClosed, "held D-pad does not retrigger after RT release");
+        near(position[0], TransitConstants.limitClosed, "RT restart waits for shooter readiness");
+        check(transit.getFiringState() == Transit.FiringState.WAITING, "RT restart requests feed without A");
+        test.gamepad1.left_bumper = true;
+        test.loop();
+        check(intake.jamRequested, "LB requests intake reverse with RT");
+        near(transit.getRequestedPower(), 0.4, "LB runs transit forward with RT");
+        test.gamepad1.b = true;
+        test.gamepad1.dpad_right = true;
+        test.loop();
+        near(shooter.getPitchPosition(), 0.51, "B blocks pitch adjustment");
+        check(!intake.shootRequested, "B clears intake shooting request");
+        near(transit.getRequestedPower(), 0.0, "B stops transit while LB is held");
+        check(!intake.jamRequested, "B clears the LB intake reverse request");
+        test.gamepad1.b = false;
+        test.gamepad1.left_bumper = false;
+        test.gamepad1.dpad_right = false;
+        test.loop();
+        near(transit.getRequestedPower(), 0.0, "B remains latched while RT stays held");
+        check(!shooter.hasTargetVelocity(), "latched stop blocks shooter restart");
+        test.gamepad1.right_trigger = 0.0f;
+        test.loop();
+        test.gamepad1.right_trigger = 1.0f;
+        test.loop();
+        check(transit.getFiringState() == Transit.FiringState.WAITING, "RT restarts feed request after releasing stop latch");
+        set(shooter, Shooter.class, "withinToleranceSinceNanos", System.nanoTime() - 100_000_000L);
+        set(shooter, Shooter.class, "pitchChangedAtNanos", System.nanoTime() - 1_000_000_000L);
+        test.loop();
+        set(transit, Transit.class, "feedReverseTimeSeconds", 0.0);
+        test.loop();
+        near(transit.getRequestedPower(), TransitConstants.feedPower, "RT resumes feeding after stop recovery");
+        test.gamepad1.b = true;
+        test.loop();
+        near(transit.getRequestedPower(), 0.0, "B cancels an active RT feed");
+        near(position[0], TransitConstants.limitClosed, "B closes the active feed gate");
     }
 
     public static void main(String[] args) throws Exception {

@@ -127,6 +127,17 @@ public class ShooterDistanceCheck {
             shot(shooter, 300.0, 2000.0, 0.2);
             shot(shooter, 50.0, 1000.0, 0.4);
             shot(shooter, 350.0, 2000.0, 0.2);
+            ShooterConstants.centerDistanceCm = 67.0;
+            ShooterConstants.centerVelocityTicksPerSecond = 1590.0;
+            ShooterConstants.centerPitchPosition = 0.52;
+            ShooterConstants.wallDistanceCm = 112.0;
+            ShooterConstants.wallVelocityTicksPerSecond = 1780.0;
+            ShooterConstants.wallPitchPosition = 0.37;
+            shot(shooter, 67.0, 1590.0, 0.52);
+            shot(shooter, 89.5, 1685.0, 0.445);
+            shot(shooter, 112.0, 1780.0, 0.37);
+            shot(shooter, 120.0, 1780.0, 0.37);
+            configure();
             ShooterConstants.centerDistanceCm = 300.0;
             ShooterConstants.wallDistanceCm = 100.0;
             shot(shooter, 200.0, 1500.0, 0.3);

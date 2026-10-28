@@ -1,7 +1,6 @@
 package org.firstinspires.ftc.teamcode.subsystems.drive;
 
 import com.arcrobotics.ftclib.controller.PIDFController;
-import com.qualcomm.hardware.gobilda.GoBildaPinpointDriver;
 import com.qualcomm.robotcore.util.Range;
 
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
@@ -31,12 +30,12 @@ public class PositionHoldController {
     private double positionErrorInches = Double.NaN;
     private long withinToleranceSinceNanos = -1;
 
-    public void update(Pose2D pose, GoBildaPinpointDriver.DeviceStatus status,
+    public void update(Pose2D pose, boolean poseValid,
                        double speedInchesPerSecond) {
         forwardPower = 0.0;
         strafePower = 0.0;
         if (!hasValidConfiguration() || pose == null
-                || status != GoBildaPinpointDriver.DeviceStatus.READY
+                || !poseValid
                 || !Double.isFinite(speedInchesPerSecond)) {
             reset();
             return;

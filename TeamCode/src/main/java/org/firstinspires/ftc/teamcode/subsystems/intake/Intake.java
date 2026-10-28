@@ -19,7 +19,9 @@ public class Intake extends SubsystemBase {
     private boolean ballPresent;
     private boolean countedCurrentPresence;
     private boolean jamRequested;
+    private boolean reverseRequested;
     private boolean intakeRequested;
+    private boolean shootRequested;
     private FlowerState flowerState = FlowerState.RAISED;
 
     public enum FlowerState {
@@ -39,11 +41,21 @@ public class Intake extends SubsystemBase {
     }
 
     public void updateInputs(boolean intakeRequested, boolean jamRequested) {
+        updateInputs(intakeRequested, jamRequested, false);
+    }
+
+    public void updateInputs(boolean intakeRequested, boolean jamRequested, boolean shootRequested) {
         if (this.jamRequested && !jamRequested) {
             clearBallCount();
         }
         this.jamRequested = jamRequested;
         this.intakeRequested = intakeRequested;
+        this.shootRequested = shootRequested;
+        updateMotorPower();
+    }
+
+    public void setReverseRequested(boolean reverseRequested) {
+        this.reverseRequested = reverseRequested;
         updateMotorPower();
     }
 
@@ -53,12 +65,15 @@ public class Intake extends SubsystemBase {
     }
 
     public void suspend() {
+        shootRequested = false;
         setPower(0.0);
     }
 
     public void stop() {
         jamRequested = false;
+        reverseRequested = false;
         intakeRequested = false;
+        shootRequested = false;
         setPower(0.0);
     }
 
@@ -130,8 +145,10 @@ public class Intake extends SubsystemBase {
     }
 
     private void updateMotorPower() {
-        if (jamRequested) {
+        if (jamRequested || reverseRequested) {
             setPower(IntakeConstants.jamPower);
+        } else if (shootRequested) {
+            setPower(IntakeConstants.feedPower);
         } else if (ballCount >= IntakeConstants.maxBallCount) {
             setPower(IntakeConstants.fullReversePower);
         } else if (!Double.isFinite(distanceCm) || distanceCm < 0.0) {

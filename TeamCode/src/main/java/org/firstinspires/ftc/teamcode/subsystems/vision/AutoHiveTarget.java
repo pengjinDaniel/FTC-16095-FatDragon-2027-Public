@@ -34,13 +34,14 @@ public class AutoHiveTarget {
             return;
         }
         Pose2D fieldPose = toHiveFieldPose(pedroPose);
+        int requiredTagCount = Math.max(1, VisionConstants.minimumBotposeTagCount);
         if (vision.getRawRobotFieldPose().isPresent()
-                && vision.getBotposeTagCount() >= VisionConstants.minimumBotposeTagCount
-                && vision.getUsableTagCount() >= VisionConstants.minimumBotposeTagCount) {
+                && vision.getBotposeTagCount() >= requiredTagCount
+                && vision.getUsableTagCount() >= requiredTagCount) {
             VisionMath.HiveSolveResult solve = VisionMath.solveHiveFlatPose(
                     vision.getRawRobotFieldPose().get(), VisionConstants.hivePivotHeightInches,
                     VisionConstants.maximumHiveTiltDegrees, VisionConstants.robotLevelToleranceDegrees);
-            VisionMath.HiveCorrection correction = VisionMath.selectHiveCorrection(solve, fieldPose);
+            VisionMath.HiveCorrection correction = solve.correction;
             status = solve.status;
             if (correction != null) {
                 double positionDifference = Math.hypot(
@@ -65,11 +66,11 @@ public class AutoHiveTarget {
             }
         }
         // Cached geometry can support distance shots; only a current observation can report HIGH.
-        double[] target = fieldTarget();
-        if (target != null) {
+        double[] tagCenter = VisionMath.tagClusterCenterForHiveTilt(cluster, lastKnownAngleDegrees);
+        if (tagCenter != null) {
             distanceCm = DistanceUnit.INCH.toCm(Math.hypot(
-                    target[0] - fieldPose.getX(DistanceUnit.INCH),
-                    target[1] - fieldPose.getY(DistanceUnit.INCH)));
+                    tagCenter[0] - fieldPose.getX(DistanceUnit.INCH),
+                    tagCenter[1] - fieldPose.getY(DistanceUnit.INCH)));
         }
     }
 
