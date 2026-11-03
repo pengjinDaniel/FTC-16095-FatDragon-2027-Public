@@ -22,6 +22,8 @@ public class Drive extends SubsystemBase {
     private boolean fieldPoseInitialized;
     private double driverHeadingReferenceRadians = Double.NaN;
     private double lastVisionTimestamp = Double.NaN;
+    private double lastProcessedVisionTimestamp = Double.NaN;
+    private int rejectedVisionFrameCount;
     private String localizationStatus = "Waiting for Limelight field initialization";
 
     public Drive(HardwareMap hardwareMap) {
@@ -80,17 +82,51 @@ public class Drive extends SubsystemBase {
     }
 
     public boolean updateVisionPose(Pose2D pose, double frameTimestamp, long nowNanos) {
-        if (!isFinitePose(pose) || !Double.isFinite(frameTimestamp) || frameTimestamp <= 0.0) {
-            localizationStatus = "Invalid Limelight field pose";
+        if (!DriveConstants.pinpointConfigurationConfirmed) {
+            localizationStatus = "Pinpoint configuration needs confirmation";
+            resetVisionRejectionSequence();
             return false;
         }
-        if (frameTimestamp == lastVisionTimestamp) return false;
+        if (!isFinitePose(pose) || !Double.isFinite(frameTimestamp) || frameTimestamp <= 0.0) {
+            localizationStatus = "Invalid Limelight field pose";
+            resetVisionRejectionSequence();
+            return false;
+        }
+        if (frameTimestamp == lastProcessedVisionTimestamp) return false;
         if (pinpoint.getDeviceStatus() != GoBildaPinpointDriver.DeviceStatus.READY) {
             clearVisionPose("Pinpoint not ready for vision overwrite: " + pinpoint.getDeviceStatus());
             return false;
         }
+        lastProcessedVisionTimestamp = frameTimestamp;
+        if (!Double.isFinite(DriveConstants.maximumVisionPositionDifferenceInches)
+                || DriveConstants.maximumVisionPositionDifferenceInches < 0.0
+                || !Double.isFinite(DriveConstants.maximumVisionHeadingDifferenceDegrees)
+                || DriveConstants.maximumVisionHeadingDifferenceDegrees < 0.0
+                || DriveConstants.visionRejectedFramesBeforeOverride < 1) {
+            localizationStatus = "Invalid vision correction gates";
+            resetVisionRejectionSequence();
+            return false;
+        }
+        Pose2D predictedPose = pinpoint.getPosition();
+        boolean initialized = fieldPoseInitialized;
+        double positionDifference = isFinitePose(predictedPose) ? Math.hypot(
+                pose.getX(DistanceUnit.INCH) - predictedPose.getX(DistanceUnit.INCH),
+                pose.getY(DistanceUnit.INCH) - predictedPose.getY(DistanceUnit.INCH)) : Double.NaN;
+        double headingDifference = isFinitePose(predictedPose) ? Math.abs(Math.IEEEremainder(
+                pose.getHeading(AngleUnit.DEGREES) - predictedPose.getHeading(AngleUnit.DEGREES),
+                360.0)) : Double.NaN;
+        boolean outsideGate = initialized && (
+                positionDifference > DriveConstants.maximumVisionPositionDifferenceInches
+                || headingDifference > DriveConstants.maximumVisionHeadingDifferenceDegrees);
+        if (outsideGate) {
+            rejectedVisionFrameCount++;
+            if (rejectedVisionFrameCount < DriveConstants.visionRejectedFramesBeforeOverride) {
+                localizationStatus = "Rejected vision jump " + rejectedVisionFrameCount
+                        + "/" + DriveConstants.visionRejectedFramesBeforeOverride + "; using Pinpoint";
+                return false;
+            }
+        }
         double previousHeading = pinpoint.getHeading(AngleUnit.RADIANS);
-        // Every accepted vision correction writes the complete field pose, regardless of disagreement.
         pinpoint.setPosition(pose);
         pinpoint.update();
         if (pinpoint.getDeviceStatus() != GoBildaPinpointDriver.DeviceStatus.READY) {
@@ -112,13 +148,21 @@ public class Drive extends SubsystemBase {
         }
         fieldPoseInitialized = true;
         lastVisionTimestamp = frameTimestamp;
-        localizationStatus = "Pinpoint field pose overwritten from Limelight";
+        resetVisionRejectionSequence();
+        localizationStatus = outsideGate ? "Forced vision override"
+                : initialized ? "Vision correction applied" : "Initialized from first corrected frame";
         return true;
+    }
+
+    public void resetVisionRejectionSequence() {
+        rejectedVisionFrameCount = 0;
     }
 
     public void clearVisionPose(String reason) {
         fieldPoseInitialized = false;
         lastVisionTimestamp = Double.NaN;
+        lastProcessedVisionTimestamp = Double.NaN;
+        resetVisionRejectionSequence();
         driverHeadingReferenceRadians = Double.NaN;
         localizationStatus = reason;
     }

@@ -77,10 +77,9 @@ public class AutoHiveTarget {
     private double[] fieldTarget() {
         double[][] targets = VisionConstants.cellTargetFieldXYInches;
         if (targets == null || cluster.getTuningIndex() >= targets.length) return null;
-        return VisionMath.cellTargetForHiveTilt(
-                targets[cluster.getTuningIndex()], VisionConstants.cellTargetReferenceHeightInches,
-                VisionConstants.hivePivotHeightInches, VisionConstants.cellTargetReferenceTiltDegrees,
-                lastKnownAngleDegrees);
+        double[] target = targets[cluster.getTuningIndex()];
+        return target != null && target.length >= 2
+                && Double.isFinite(target[0]) && Double.isFinite(target[1]) ? target : null;
     }
 
     // The custom HIVE fmap shares this route's axes, with its origin at field center.

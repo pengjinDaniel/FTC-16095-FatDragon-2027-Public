@@ -112,14 +112,27 @@ public class HiveGeometryCheck {
 
     public static void main(String[] args) throws Exception {
         VisionMath.HiveSolveResult visual = noisyMirror();
-        check(visual.usableCandidateCount == 1 && visual.correction != null,
-                "full visual orientation provides one pose without a Pinpoint reference");
+        check(visual.usableCandidateCount == 2 && visual.correction != null,
+                "height-derived HIVE geometry restores the two historical floor roots");
         close(visual.correction.robotPose.getHeading(AngleUnit.DEGREES), 90, 1e-6,
-                "visual correction preserves heading");
-        close(visual.correction.hiveAngleDegrees, -26, 1e-6,
-                "visual HIVE tilt uses both pitch and roll");
-        check(Math.abs(visual.correction.robotPose.getX(DistanceUnit.INCH)) < .2,
-                "orientation noise does not select the old mirrored floor root");
+                "historical correction preserves heading");
+        close(visual.correction.hiveAngleDegrees, -22.1897419065, 1e-6,
+                "the historical root with the smaller level residual is selected");
+        close(visual.correction.robotPose.getX(DistanceUnit.INCH), -3.0004376347, 1e-6,
+                "the noisy fixture reproduces the historical root choice");
+
+        double pivotCm = 43.9497007874 * 2.54;
+        double phi = Math.toRadians(30);
+        Pose3D biasedOrientation = new Pose3D(new Position(DistanceUnit.CM,
+                100 * Math.cos(phi) - pivotCm * Math.sin(phi), 40,
+                pivotCm - 100 * Math.sin(phi) - pivotCm * Math.cos(phi), 0),
+                new YawPitchRollAngles(AngleUnit.DEGREES, 0, 35, 0, 0));
+        VisionMath.HiveSolveResult biased = VisionMath.solveHiveFlatPose(
+                biasedOrientation, 43.9497007874, 35, 10);
+        check(biased.correction != null, "a five-degree attitude error can pass the historical level check");
+        close(biased.correction.robotPose.getX(DistanceUnit.CM), 100, .001,
+                "HIVE tilt comes from height geometry instead of absorbing attitude noise into X");
+        close(biased.correction.hiveAngleDegrees, -30, .001, "height-derived tilt stays at the known angle");
 
         for (double x : new double[]{-30, -3, 0, 3, 30}) {
             for (double heading : new double[]{-180, -135, -90, -45, 0, 45, 90, 135}) {
@@ -150,8 +163,8 @@ public class HiveGeometryCheck {
                             solve(xCm / 2.54, 40, 90, theta, mapXError, 5e-10);
                     VisionMath.HiveCorrection correction = result.correction;
                     if (xCm == 0) {
-                        check(correction == null || correction.robotPose.getX(DistanceUnit.INCH) == 0,
-                                "center-line map rounding must wait or preserve deterministic X=0");
+                        check(correction == null || Math.abs(correction.robotPose.getX(DistanceUnit.INCH)) < .01,
+                                "center-line rounding stays within the floor-root numerical scale");
                     } else {
                         check(correction != null
                                 && correction.robotPose.getX(DistanceUnit.INCH) * xCm > 0,
@@ -203,8 +216,8 @@ public class HiveGeometryCheck {
                     runtime.frame(solve(x, y, 90, -side * 30.0), 2, false, 0);
                     close(DistanceUnit.INCH.toCm(runtime.vision.getTagCenterHorizontalDistanceInches()),
                             distanceCm, .002, "production shot distance matches the four-tag measurement");
-                    close(runtime.vision.getTargetXInches(), side * 16.52, .002,
-                            "aiming retains the CELL opening center");
+                    close(runtime.vision.getTargetXInches(), side * 17.7, .002,
+                            "aiming restores the fixed historical CELL opening");
                 }
             }
         }
@@ -230,12 +243,12 @@ public class HiveGeometryCheck {
             RuntimePath runtime = new RuntimePath(alliance);
             double y = alliance == Alliance.BLUE ? 40 : -40;
             runtime.calibrate(solve(30, y, 180, -30), 1, 0);
-            check(runtime.drive.isFieldPoseInitialized(), "three stable visual frames initialize");
-            close(runtime.vision.getTargetXInches(), 16.52, .002, "HIGH opening reference");
+            check(runtime.drive.isFieldPoseInitialized(), "valid visual frames initialize the field pose");
+            close(runtime.vision.getTargetXInches(), 17.7, .002, "historical fixed opening reference");
             runtime.frame(solve(30, y, 180, 0), 2, false, 100_000_000L);
             check(!runtime.drive.hasAcceptedVisionFrame(2), "B stop pauses visual pose overwrites");
-            close(runtime.vision.getTargetXInches(), 21.456559, .002,
-                    "the aim point follows HIVE tilt while pose writes are paused");
+            close(runtime.vision.getTargetXInches(), 17.7, .002,
+                    "the restored opening target stays fixed as HIVE tilt changes");
             check(runtime.vision.getTargetHiveState() == HiveState.MIDDLE,
                     "HIVE state follows the current visual observation");
             Method clear = Vision.class.getDeclaredMethod("clearCurrentFrame");
@@ -250,13 +263,13 @@ public class HiveGeometryCheck {
             runtime.frame(solve(-30, y, 180, 30), 3, false, 300_000_000L);
             check(!runtime.drive.hasAcceptedVisionFrame(3),
                     "a paused overwrite keeps using odometry");
-            close(runtime.vision.getTargetXInches(), -16.52, .002,
+            close(runtime.vision.getTargetXInches(), -17.7, .002,
                     "crossing the field switches to the opposite opening");
             check(runtime.vision.getSelectedCluster().get()
                             == CellCluster.forFieldX(alliance, -30).get(),
                     "Red and Blue both select the current odometry half");
         }
         System.out.println("PASS HiveGeometryCheck: " + checks
-                + " visual-orientation, independent CAD/SDK, B-stop exclusion and odometry-continuation assertions");
+                + " historical floor-root, fixed targets, CAD/SDK distance and odometry-continuation assertions");
     }
 }

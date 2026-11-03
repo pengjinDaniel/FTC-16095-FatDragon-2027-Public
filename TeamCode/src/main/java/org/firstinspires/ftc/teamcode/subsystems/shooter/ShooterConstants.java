@@ -1,6 +1,8 @@
 package org.firstinspires.ftc.teamcode.subsystems.shooter;
 
 import com.acmerobotics.dashboard.config.Config;
+import com.qualcomm.robotcore.hardware.DcMotor;
+import com.qualcomm.robotcore.hardware.DcMotorEx;
 import com.qualcomm.robotcore.hardware.DcMotorSimple;
 
 @Config
@@ -13,7 +15,7 @@ public class ShooterConstants {
     public static DcMotorSimple.Direction rightShooterDirection =
             DcMotorSimple.Direction.FORWARD;
 
-    public static double idlePower = 0.7;
+    public static double idlePower = 0.55;
     public static double maxPower = 1;
     public static double targetVelocity = 1700.0;
     public static String pitchServoName = "pitchServo";
@@ -25,19 +27,31 @@ public class ShooterConstants {
 
     // Measure horizontally from robot center to the current CELL's four-AprilTag centroid, in cm.
     // Velocity values are encoder ticks/s; pitch values are servo positions, not angles.
-    public static double centerDistanceCm = 62.1;
-    public static double centerVelocityTicksPerSecond = 1650.0;
+    public static double centerDistanceCm = 60.6;
+    public static double centerVelocityTicksPerSecond = 1560.0;
     public static double centerPitchPosition = 0.54;
-    public static double wallDistanceCm = 139.0;
+    public static double wallDistanceCm = 163.5;
     public static double wallVelocityTicksPerSecond = 1840.0;
-    public static double wallPitchPosition = 0.22;
+    public static double wallPitchPosition = 0.26;
+
+    // Extra points: {distanceCm, velocityTicksPerSecond, pitchServoPosition}.
+    // Interpolated starting values, not measurements; replace each row with measured data.
+    // Points may be in any order, but distances must be unique (including center/wall).
+    // Use an empty array to return to center/wall-only interpolation.
+    public static double[][] additionalShotPoints = {
+            {99.0, 1660.0, 0.41},
+            {129.0, 1680.0, 0.34},
+            {75.0, 1580.0, 0.46},
+            {139.0, 1800, 0.33}
+    };
 
     // Enables the selected shared PID configuration; verify its gains on the robot.
     public static boolean velocityControlCalibrated = true;
     public static double kP = 0.004;
     public static double kI = 0.0;
-    public static double kD = 0.0007;
-    public static double kF = 0.0009;
+    public static double kD = 0.0;
+    // Feedforward is power per tick/s; leave feedback headroom at the shot targets.
+    public static double kF = 0.0004;
 
     // Fractional speed tolerances; fixed power uses a stable measured reference.
     public static double readyEnterTolerance = 0.06;

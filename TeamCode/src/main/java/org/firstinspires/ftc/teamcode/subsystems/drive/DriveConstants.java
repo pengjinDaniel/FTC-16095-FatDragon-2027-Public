@@ -22,12 +22,13 @@ public class DriveConstants {
     public static double pinpointXOffsetMm = -96.0;
     public static double pinpointYOffsetMm = -74.0;
     public static GoBildaPinpointDriver.EncoderDirection pinpointForwardPodDirection =
-            GoBildaPinpointDriver.EncoderDirection.FORWARD;
+            GoBildaPinpointDriver.EncoderDirection.REVERSED;
     public static GoBildaPinpointDriver.EncoderDirection pinpointStrafePodDirection =
-            GoBildaPinpointDriver.EncoderDirection.FORWARD;
-    // Pedro autonomous observation checks only; TeleOp vision overwrites bypass these differences.
-    public static double maximumVisionPositionDifferenceInches = 15.0 / 2.54;
-    public static double maximumVisionHeadingDifferenceDegrees = 15.0;
+            GoBildaPinpointDriver.EncoderDirection.REVERSED;
+    // Historical vision correction gates; three distinct rejected frames restore vision priority.
+    public static double maximumVisionPositionDifferenceInches = 12.0;
+    public static double maximumVisionHeadingDifferenceDegrees = 30.0;
+    public static int visionRejectedFramesBeforeOverride = 3;
     public static boolean positionHoldCalibrated = false;
     public static double positionHoldKp = 0.12;
     public static double positionHoldKi = 0.0;
@@ -40,13 +41,13 @@ public class DriveConstants {
     // P/I/D use radian error; F preserves the original error-scaled feedforward.
     public static volatile double autoAimKp = -1;
     public static volatile double autoAimKi = 0.0;
-    public static volatile double autoAimKd = -0.0025;
-    public static volatile double autoAimKf = 0;
+    public static volatile double autoAimKd = -0.02;
+    public static volatile double autoAimKf = 0.0;
     public static volatile double autoAimYawToTurnSign = 1.0;
-    public static volatile double autoAimMaxTurnPower = 0.5;
-    public static volatile double autoAimTestMaxTurnPower = 0.5;
-    public static volatile double autoAimAcquisitionTurnPower = 0.5;
-    public static volatile double aimLockToleranceDegrees = 10.0;
-    public static volatile double aimUnlockToleranceDegrees = 10.0;
-    public static volatile double aimLockStableTimeSeconds = 0.05;
+    public static volatile double autoAimMaxTurnPower = 0.65;
+    public static volatile double autoAimTestMaxTurnPower = 0.65;
+    public static volatile double autoAimAcquisitionTurnPower = 0.65;
+    public static volatile double aimLockToleranceDegrees = 1.5;
+    public static volatile double aimUnlockToleranceDegrees = 2.5;
+    public static volatile double aimLockStableTimeSeconds = 0.15;
 }

@@ -76,10 +76,6 @@ public class ShootAssistCommand extends CommandBase {
         double forward = applyDeadband(gamepadEx.getLeftY());
         double strafe = applyDeadband(gamepadEx.getLeftX());
         manualTranslation = forward != 0.0 || strafe != 0.0;
-        if (autoAimEnabled && vision.wasCorrectionApplied()) {
-            autoAim.reset();
-            positionHold.reset();
-        }
         if (!autoAimEnabled || !vision.isAimCalibrationReady() || manualTranslation) {
             positionHold.reset();
         } else {
@@ -143,15 +139,16 @@ public class ShootAssistCommand extends CommandBase {
         }
 
         boolean validAimingTarget = vision.hasValidAimingTarget();
-        double autoAimTurn = autoAimEnabled ? autoAim.calculateTurnPower(
-                validAimingTarget,
-                vision.getYawErrorDegrees()
-        ) : 0.0;
+        double autoAimTurn = 0.0;
+        if (autoAimEnabled) {
+            autoAimTurn = autoAim.calculateTurnPower(
+                    validAimingTarget, vision.getYawErrorDegrees());
+        }
 
         double distanceCm = validAimingTarget ? DistanceUnit.INCH.toCm(
                 vision.getTagCenterHorizontalDistanceInches()) : Double.NaN;
         if (!shooter.setDistanceTarget(distanceCm)) {
-            // Invalid position/calibration also cancels an already committed feed.
+            // Invalid targeting also cancels an already committed feed.
             resetFiringSequence(FiringState.WAITING);
             return validAimingTarget ? autoAimTurn : 0.0;
         }

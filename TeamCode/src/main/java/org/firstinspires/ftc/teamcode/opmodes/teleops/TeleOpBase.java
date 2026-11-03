@@ -12,6 +12,7 @@ import org.firstinspires.ftc.teamcode.commands.IntakeCommand;
 import org.firstinspires.ftc.teamcode.commands.ShootAssistCommand;
 import org.firstinspires.ftc.teamcode.subsystems.drive.AutoAimController;
 import org.firstinspires.ftc.teamcode.subsystems.drive.Drive;
+import org.firstinspires.ftc.teamcode.subsystems.drive.DriveConstants;
 import org.firstinspires.ftc.teamcode.subsystems.intake.Intake;
 import org.firstinspires.ftc.teamcode.subsystems.shooter.Shooter;
 import org.firstinspires.ftc.teamcode.subsystems.transit.Transit;
@@ -124,9 +125,35 @@ public abstract class TeleOpBase extends CommandOpMode {
                 && Double.isFinite(pose.getX(DistanceUnit.INCH))
                 && Double.isFinite(pose.getY(DistanceUnit.INCH))
                 && Double.isFinite(pose.getHeading(AngleUnit.DEGREES));
+        boolean aligned = isAutoAimEnabled() && started && !stopLatched && aimRequested
+                && vision.hasValidAimingTarget() && vision.isAimCalibrationReady() && autoAim.isLocked();
+        String aimState = !started ? "等待START" : stopLatched ? "已停止"
+                : !isAutoAimEnabled() ? "手动瞄准（右摇杆转向，R2射击）"
+                : !aimRequested ? "未启动（按R2瞄准）"
+                : !vision.hasValidAimingTarget() ? "无有效瞄准目标"
+                : !vision.isAimCalibrationReady() ? "已停止（松开RT恢复）"
+                : aligned ? "已对准并稳定" : "未对准或尚未稳定";
+        if (isAutoAimEnabled() && started && aimRequested && !stopLatched && vision.hasValidAimingTarget()) {
+            aimState += String.format(java.util.Locale.US, "（误差 %.1f° / 放行 ±%.1f°）",
+                    vision.getYawErrorDegrees(), DriveConstants.aimLockToleranceDegrees);
+        }
+        telemetry.addData("瞄准", aimState);
+        boolean allowed = started && !stopLatched && aimRequested && shootAssistCommand.canFire();
+        telemetry.addData("允许射击", allowed ? "是" : "否：" + shootingBlockReason());
+        telemetry.addData("射手达速", "%s（左 %.0f / 右 %.0f / 目标 %.0f ticks/s）",
+                !shooter.hasTargetVelocity() ? "未设置射击转速"
+                        : shooter.isReady() ? "已达速并稳定" : "未达速或尚未稳定",
+                shooter.getLeftVelocity(), shooter.getRightVelocity(), shooter.getTargetVelocity());
+        telemetry.addData("射手模式/功率", "%s / %.2f / %.2f",
+                shooter.getControlMode(), shooter.getLeftPower(), shooter.getRightPower());
         if (isAutoAimEnabled()) {
             double yawError = vision.getYawErrorDegrees();
             double headingVelocity = drive.getHeadingVelocityDegreesPerSecond();
+            telemetry.addData("自瞄阶段", !started ? "等待START" : stopLatched ? "已停止"
+                    : !aimRequested ? "持续视觉校准"
+                    : vision.hasValidAimingTarget() ? "OD坐标自瞄（视觉校准暂停）" : "等待有效场地定位");
+            telemetry.addData("自瞄原始输出/IMU", "%+.3f / %+.1f°/s",
+                    autoAim.getRawTurnPower(), headingVelocity);
             String targetStatus = drive.isFieldPoseInitialized()
                     ? vision.getTargetStatus()
                     : vision.getCalibrationStatus();
@@ -177,19 +204,6 @@ public abstract class TeleOpBase extends CommandOpMode {
             target += "；当前选择：" + cellLabel(selected);
         }
         telemetry.addData("应瞄准框", target);
-        boolean aligned = isAutoAimEnabled() && started && !stopLatched && aimRequested
-                && vision.hasValidAimingTarget() && vision.isAimCalibrationReady() && autoAim.isLocked();
-        String aimState = !started ? "等待START" : stopLatched ? "已停止"
-                : !isAutoAimEnabled() ? "手动瞄准（右摇杆转向，R2射击）"
-                : !aimRequested ? "未启动（按R2瞄准）"
-                : !vision.hasValidAimingTarget() ? "无有效瞄准目标"
-                : aligned ? "已对准" : "调整中";
-        if (isAutoAimEnabled() && started && aimRequested && !stopLatched && vision.hasValidAimingTarget()) {
-            aimState += String.format(java.util.Locale.US, "（误差 %.1f°）",vision.getYawErrorDegrees());
-        }
-        telemetry.addData("瞄准", aimState);
-        boolean allowed = started && !stopLatched && aimRequested && shootAssistCommand.canFire();
-        telemetry.addData("允许射击", allowed ? "是" : "否：" + shootingBlockReason());
         // The same vision-initialized Pinpoint field pose used for CELL selection and aiming.
         telemetry.addData("场地坐标（中心0/0，X朝观众）", "X %.1f cm / Y %.1f cm / 朝向 %.1f°（%s）",
                 pose.getX(DistanceUnit.CM),pose.getY(DistanceUnit.CM),pose.getHeading(AngleUnit.DEGREES),
@@ -213,8 +227,6 @@ public abstract class TeleOpBase extends CommandOpMode {
         telemetry.addData("射手转速", "%.0f / %.0f ticks/s",
                 shooter.getLeftVelocity(), shooter.getRightVelocity());
         telemetry.addData("射手目标转速", "%.0f ticks/s", shooter.getTargetVelocity());
-        telemetry.addData("射手模式/功率", "%s / %.2f / %.2f",
-                shooter.getControlMode(), shooter.getLeftPower(), shooter.getRightPower());
         telemetry.addData("Pitch位置", "%.3f", shooter.getPitchPosition());
         telemetry.update();
     }
@@ -237,7 +249,8 @@ public abstract class TeleOpBase extends CommandOpMode {
         if (gamepad1.right_bumper) return "正在排堵";
         if (!Shooter.areDistanceShotValuesValid()) return "两点射击参数未填完整或超出限值";
         if (!vision.hasValidAimingTarget()) return "定位或瞄准目标无效";
-        if (isAutoAimEnabled() && !vision.isAimCalibrationReady()) return "场地定位不可用；松开RT后校准";
+        if (isAutoAimEnabled() && !vision.isAimCalibrationReady())
+            return "已停止，松开R2恢复";
         if (shootAssistCommand.getFiringState() == Transit.FiringState.REVERSING)
             return "已放行，送球前反转中";
         if (!shooter.isReady()) return "射手转速尚未稳定";

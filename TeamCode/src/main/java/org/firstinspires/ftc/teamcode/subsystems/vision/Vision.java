@@ -6,11 +6,11 @@ import com.qualcomm.hardware.limelightvision.LLResultTypes;
 import com.qualcomm.hardware.limelightvision.Limelight3A;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 
-import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.Pose2D;
 import org.firstinspires.ftc.robotcore.external.navigation.Pose3D;
 import org.firstinspires.ftc.teamcode.subsystems.drive.Drive;
+import org.firstinspires.ftc.teamcode.subsystems.drive.DriveConstants;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -53,18 +53,8 @@ public class Vision extends SubsystemBase {
     private String calibrationStatus = "Waiting for corrected vision";
     private boolean calibrationSucceeded;
     private long lastSuccessfulCalibrationNanos;
-    private double calibrationCooldownRemainingSeconds;
-    private enum RtCalibrationState { IDLE, PAUSED, FAILED }
-    private static final int REQUIRED_STABLE_FRAMES = 3;
-    private RtCalibrationState rtCalibrationState = RtCalibrationState.IDLE;
     private boolean rtAimRequested;
-    private double lastCalibrationFrameTimestamp = Double.NaN;
-    private int stableFrameCount;
-    private Pose2D anchorVisionPose;
-    private Pose2D anchorOdometryPose;
-    private double anchorHiveAngleDegrees;
-    private long lastCalibrationSampleNanos;
-    private CellCluster rtSelectedCluster;
+    private boolean rtStopLatched;
     private boolean validAimingTarget;
     private boolean validShootingTarget;
     private double targetHorizontalDistanceInches = Double.NaN;
@@ -148,15 +138,10 @@ public class Vision extends SubsystemBase {
         }
         List<Integer> ids = new ArrayList<>();
         Map<Integer, Pose3D> poses = new LinkedHashMap<>();
-        boolean foreignAllianceTag = false;
         for (LLResultTypes.FiducialResult fiducial : fiducials) {
             int id = fiducial.getFiducialId();
             Optional<CellCluster> cluster = CellCluster.forTagId(id);
             if (!cluster.isPresent()) {
-                continue;
-            }
-            if (!cluster.get().isForAlliance(alliance)) {
-                foreignAllianceTag = true;
                 continue;
             }
             ids.add(id);
@@ -172,10 +157,6 @@ public class Vision extends SubsystemBase {
         }
         visibleTagIds = Collections.unmodifiableList(ids);
         visibleTagPosesRobotSpace = Collections.unmodifiableMap(poses);
-        if (foreignAllianceTag) {
-            poseStatus = "Rejected mixed-alliance HIVE tags";
-            return;
-        }
         botposeTagCount = result.getBotposeTagCount();
         rawRobotFieldPose = result.getBotpose();
         int requiredTagCount = Math.max(1, VisionConstants.minimumBotposeTagCount);
@@ -186,7 +167,7 @@ public class Vision extends SubsystemBase {
         }
         if (usableTagCount < requiredTagCount) {
             poseStatus = "Need at least " + requiredTagCount
-                    + " alliance tags with area >= " + VisionConstants.minimumTargetArea
+                    + " HIVE tags with area >= " + VisionConstants.minimumTargetArea
                     + "%; got " + usableTagCount;
             return;
         }
@@ -206,10 +187,8 @@ public class Vision extends SubsystemBase {
         if (!hiveSolveSuccessful) return;
         hiveAngleDegrees = correction.hiveAngleDegrees;
         robotLevelErrorDegrees = correction.levelErrorDegrees;
-        if (!rtAimRequested) {
-            hasKnownHiveAngle = true;
-            lastKnownHiveAngleDegrees = hiveAngleDegrees;
-        }
+        hasKnownHiveAngle = true;
+        lastKnownHiveAngleDegrees = hiveAngleDegrees;
         Map<CellCluster, HiveState> states = new EnumMap<>(CellCluster.class);
         for (CellCluster cluster : CellCluster.values()) {
             double[] target = getFieldTarget(cluster);
@@ -235,19 +214,12 @@ public class Vision extends SubsystemBase {
 
     void updateAimTarget(Drive drive, boolean stopped, boolean aimRequested, long nowNanos) {
         if (!aimRequested) {
-            rtCalibrationState = RtCalibrationState.IDLE;
-            rtSelectedCluster = null;
-            if (rtAimRequested) resetCalibrationSamples();
-        } else if (!rtAimRequested) {
-            rtCalibrationState = RtCalibrationState.PAUSED;
-            resetCalibrationSamples();
-            rtSelectedCluster = drive.isFieldPoseInitialized()
-                    ? CellCluster.forFieldX(alliance, drive.getPose().getX(DistanceUnit.INCH)).orElse(null)
-                    : null;
+            rtStopLatched = false;
         }
         rtAimRequested = aimRequested;
-        if (stopped && aimRequested) rtCalibrationState = RtCalibrationState.FAILED;
-        updateFieldTarget(drive, !stopped, nowNanos);
+        if (stopped && aimRequested) rtStopLatched = true;
+        updateFieldTarget(drive, !stopped && !rtStopLatched && !aimRequested, nowNanos);
+        if (stopped) calibrationStatus = "Paused: B stop";
     }
 
     public void updateFieldTarget(Drive drive, boolean correctFromVision) {
@@ -269,8 +241,12 @@ public class Vision extends SubsystemBase {
         targetHorizontalDistanceInches = Double.NaN;
         tagCenterHorizontalDistanceInches = Double.NaN;
         yawErrorDegrees = Double.NaN;
-        if (rtAimRequested && rtCalibrationState == RtCalibrationState.FAILED) {
-            targetStatus = calibrationStatus;
+        if (rtAimRequested && rtStopLatched) {
+            targetStatus = "B stop latched; release RT to resume";
+            return;
+        }
+        if (!DriveConstants.pinpointConfigurationConfirmed) {
+            targetStatus = "Pinpoint configuration needs confirmation";
             return;
         }
         if (!drive.isFieldPoseInitialized()) {
@@ -278,9 +254,7 @@ public class Vision extends SubsystemBase {
             return;
         }
         Pose2D robotPose = drive.getPose();
-        selectedCluster = rtAimRequested && rtCalibrationState == RtCalibrationState.PAUSED
-                ? rtSelectedCluster : CellCluster.forFieldX(alliance, robotPose.getX(DistanceUnit.INCH))
-                .orElse(null);
+        selectedCluster = CellCluster.forFieldX(alliance, robotPose.getX(DistanceUnit.INCH)).orElse(null);
         double[] target = getFieldTarget(selectedCluster);
         if (target == null) {
             targetStatus = "CELL field coordinates missing";
@@ -314,138 +288,24 @@ public class Vision extends SubsystemBase {
     }
 
     private void updateLocalization(Drive drive, boolean correctFromVision, long nowNanos) {
-        double interval = VisionConstants.calibrationIntervalSeconds;
-        boolean validInterval = Double.isFinite(interval) && interval >= 0.0;
-        calibrationCooldownRemainingSeconds = calibrationSucceeded && validInterval
-                ? Math.max(0.0, interval
-                - (nowNanos - lastSuccessfulCalibrationNanos) / 1_000_000_000.0) : 0.0;
-        if (!correctFromVision || rtAimRequested || !validInterval
-                || calibrationCooldownRemainingSeconds > 0.0) {
-            resetCalibrationSamples();
-            // Frames observed while paused cannot become part of the next stable window.
-            lastCalibrationFrameTimestamp = Double.isFinite(frameTimestamp)
-                    ? frameTimestamp : lastPhysicalFrameTimestamp;
-            if (!correctFromVision) {
-                calibrationStatus = "Paused: B stop";
-            } else if (rtAimRequested) {
-                updateRtPause(drive);
-            } else {
-                calibrationStatus = validInterval ? "Waiting after successful calibration"
-                        : "Invalid calibration interval";
-            }
+        if (rtAimRequested || !correctFromVision) {
+            calibrationStatus = rtStopLatched ? "Paused: B stop"
+                    : rtAimRequested ? "RT held: vision calibration paused; using Pinpoint"
+                    : "Vision correction not requested";
             return;
         }
-        updateStableCalibration(drive, nowNanos);
-    }
-
-    private boolean applyVisionCalibration(Drive drive, long nowNanos) {
+        if (correctedRobotFieldPose == null) {
+            drive.resetVisionRejectionSequence();
+            calibrationStatus = "Waiting for corrected vision: " + poseStatus;
+            return;
+        }
         boolean applied = drive.updateVisionPose(correctedRobotFieldPose, frameTimestamp, nowNanos);
         correctionApplied |= applied;
         if (applied) {
             calibrationSucceeded = true;
             lastSuccessfulCalibrationNanos = nowNanos;
-            calibrationCooldownRemainingSeconds = VisionConstants.calibrationIntervalSeconds;
         }
         calibrationStatus = drive.getLocalizationStatus();
-        return applied;
-    }
-
-    private void updateRtPause(Drive drive) {
-        if (rtCalibrationState == RtCalibrationState.FAILED) return;
-        if (!drive.isFieldPoseInitialized()) {
-            rtCalibrationState = RtCalibrationState.FAILED;
-            calibrationStatus = "RT field pose unavailable; release RT to calibrate";
-        } else {
-            calibrationStatus = "Paused: RT; using Pinpoint and cached HIVE geometry";
-        }
-    }
-
-    private void updateStableCalibration(Drive drive, long nowNanos) {
-        double positionTolerance = VisionConstants.rtStablePositionToleranceCm;
-        double headingTolerance = VisionConstants.rtStableHeadingToleranceDegrees;
-        double hiveTolerance = VisionConstants.rtStableHiveAngleToleranceDegrees;
-        if (!Double.isFinite(positionTolerance) || positionTolerance < 0.0
-                || !Double.isFinite(headingTolerance) || headingTolerance < 0.0
-                || !Double.isFinite(hiveTolerance) || hiveTolerance < 0.0) {
-            resetCalibrationSamples();
-            calibrationStatus = "Invalid calibration stability settings";
-            return;
-        }
-        Pose2D odometryPose = drive.getOdometryPose();
-        if (!isFinitePose(correctedRobotFieldPose) || !Double.isFinite(hiveAngleDegrees)
-                || !Double.isFinite(frameTimestamp) || frameTimestamp <= 0.0
-                || !isFinitePose(odometryPose)) {
-            resetCalibrationSamples();
-            if (Double.isFinite(frameTimestamp)) lastCalibrationFrameTimestamp = frameTimestamp;
-            calibrationStatus = "Collecting 0/3: " + (!isFinitePose(odometryPose)
-                    ? "Pinpoint " + drive.getOdometryStatus() + "; " + drive.getLocalizationStatus()
-                    : poseStatus);
-            return;
-        }
-        if (frameTimestamp == lastCalibrationFrameTimestamp) {
-            calibrationStatus = "Collecting " + stableFrameCount + "/3; waiting for a new frame";
-            return;
-        }
-        boolean restarted = Double.isFinite(lastCalibrationFrameTimestamp) && frameTimestamp < lastCalibrationFrameTimestamp;
-        lastCalibrationFrameTimestamp = frameTimestamp;
-        if (restarted || nowNanos - lastCalibrationSampleNanos > VisionConstants.maxResultAgeMs * 1_000_000L) {
-            resetCalibrationSamples();
-        }
-        if (stableFrameCount > 0) {
-            // Compare visual observations after transporting the first pose by relative odometry.
-            // A large constant field-frame disagreement is allowed; it is never a rejection gate.
-            double headingOffset = anchorVisionPose.getHeading(AngleUnit.RADIANS)
-                    - anchorOdometryPose.getHeading(AngleUnit.RADIANS);
-            double dx = odometryPose.getX(DistanceUnit.CM)
-                    - anchorOdometryPose.getX(DistanceUnit.CM);
-            double dy = odometryPose.getY(DistanceUnit.CM)
-                    - anchorOdometryPose.getY(DistanceUnit.CM);
-            double expectedX = anchorVisionPose.getX(DistanceUnit.CM)
-                    + Math.cos(headingOffset) * dx - Math.sin(headingOffset) * dy;
-            double expectedY = anchorVisionPose.getY(DistanceUnit.CM)
-                    + Math.sin(headingOffset) * dx + Math.cos(headingOffset) * dy;
-            double expectedHeading = anchorVisionPose.getHeading(AngleUnit.DEGREES)
-                    + odometryPose.getHeading(AngleUnit.DEGREES)
-                    - anchorOdometryPose.getHeading(AngleUnit.DEGREES);
-            double positionDifference = Math.hypot(
-                    correctedRobotFieldPose.getX(DistanceUnit.CM) - expectedX,
-                    correctedRobotFieldPose.getY(DistanceUnit.CM) - expectedY);
-            double headingDifference = Math.abs(Math.IEEEremainder(
-                    correctedRobotFieldPose.getHeading(AngleUnit.DEGREES) - expectedHeading, 360.0));
-            if (positionDifference > positionTolerance || headingDifference > headingTolerance
-                    || Math.abs(hiveAngleDegrees - anchorHiveAngleDegrees) > hiveTolerance) {
-                resetCalibrationSamples();
-            }
-        }
-        if (stableFrameCount == 0) {
-            anchorVisionPose = correctedRobotFieldPose;
-            anchorOdometryPose = odometryPose;
-            anchorHiveAngleDegrees = hiveAngleDegrees;
-        }
-        lastCalibrationSampleNanos = nowNanos;
-        stableFrameCount++;
-        calibrationStatus = "Collecting " + stableFrameCount + "/3";
-        if (stableFrameCount < REQUIRED_STABLE_FRAMES) return;
-        if (applyVisionCalibration(drive, nowNanos)) {
-            hasKnownHiveAngle = true;
-            lastKnownHiveAngleDegrees = hiveAngleDegrees;
-            calibrationStatus = "Vision corrected 3/3; waiting after successful calibration";
-        } else {
-            calibrationStatus = "Waiting for a successful vision overwrite: " + drive.getLocalizationStatus();
-        }
-        resetCalibrationSamples();
-    }
-
-    private void resetCalibrationSamples() {
-        stableFrameCount = 0;
-        anchorVisionPose = null;
-        anchorOdometryPose = null;
-    }
-
-    private static boolean isFinitePose(Pose2D pose) {
-        return pose != null && Double.isFinite(pose.getX(DistanceUnit.CM))
-                && Double.isFinite(pose.getY(DistanceUnit.CM))
-                && Double.isFinite(pose.getHeading(AngleUnit.DEGREES));
     }
 
     private double[] getFieldTarget(CellCluster cluster) {
@@ -454,25 +314,27 @@ public class Vision extends SubsystemBase {
             return null;
         }
         double[] target = targets[cluster.getTuningIndex()];
-        return VisionMath.cellTargetForHiveTilt(
-                target, VisionConstants.cellTargetReferenceHeightInches,
-                VisionConstants.hivePivotHeightInches, VisionConstants.cellTargetReferenceTiltDegrees,
-                hasKnownHiveAngle ? lastKnownHiveAngleDegrees : Double.NaN);
+        return target != null && target.length >= 2
+                && Double.isFinite(target[0]) && Double.isFinite(target[1]) ? target : null;
+    }
+
+    // Retained for callers of the former RT calibration API.
+    public boolean shouldPauseForAimCalibration() {
+        return false;
     }
 
     public boolean isAimCalibrationReady() {
-        return !rtAimRequested || rtCalibrationState == RtCalibrationState.PAUSED;
+        return !rtAimRequested || !rtStopLatched;
     }
 
     public String getRtCalibrationStatus() {
-        if (!rtAimRequested) return "未启动";
-        if (rtCalibrationState == RtCalibrationState.PAUSED) return "RT期间暂停校准；使用Pinpoint";
-        if (rtCalibrationState == RtCalibrationState.FAILED) return "已停止；松开RT恢复校准";
-        return "RT期间暂停校准";
+        return !rtAimRequested ? "RT released: continuous vision calibration"
+                : rtStopLatched ? "B stop latched; release RT to resume"
+                : "RT held: vision calibration paused; using Pinpoint";
     }
 
     public String getCalibrationStatus() { return calibrationStatus; }
-    public double getCalibrationCooldownRemainingSeconds() { return calibrationCooldownRemainingSeconds; }
+    public double getCalibrationCooldownRemainingSeconds() { return 0.0; }
     public double getSecondsSinceLastCalibration() {
         return calibrationSucceeded
                 ? Math.max(0.0, (System.nanoTime() - lastSuccessfulCalibrationNanos) / 1_000_000_000.0)

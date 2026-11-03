@@ -44,42 +44,55 @@ final class VisionMath {
             result.status = "Non-finite MT1 3D pose";
             return result;
         }
+        double radius = Math.hypot(position.x, position.z - pivotHeightInches);
+        if (radius < pivotHeightInches - 1e-9) {
+            result.status = "No real HIVE tilt solution";
+            return result;
+        }
+        double alpha = Math.asin(Math.max(-1.0, -pivotHeightInches / radius));
+        double base = Math.atan2(position.z - pivotHeightInches, position.x);
+        double[] roots = {alpha - base, Math.PI - alpha - base};
         double r00 = Math.cos(yaw) * Math.cos(pitch);
         double r10 = Math.sin(yaw) * Math.cos(pitch);
         double r20 = -Math.sin(pitch);
         double r02 = Math.cos(yaw) * Math.sin(pitch) * Math.cos(roll)
                 + Math.sin(yaw) * Math.sin(roll);
         double r22 = Math.cos(pitch) * Math.cos(roll);
-        // A level robot has R_raw * up = Ry(phi) * up. This gives one tilt from
-        // the full visual orientation, without the two floor roots or a Pinpoint reference.
-        double phi = Math.atan2(r02, r22);
-        double levelError = Math.toDegrees(Math.acos(
-                Math.max(-1.0, Math.min(1.0, Math.hypot(r02, r22)))));
-        result.candidatePhiDegrees[0] = Math.toDegrees(phi);
-        result.candidateLevelErrorsDegrees[0] = levelError;
-        if (Math.abs(Math.toDegrees(phi)) > maxTiltDegrees + NUMERICAL_TILT_TOLERANCE_DEGREES) {
-            result.status = "HIVE tilt exceeds limit";
-            return result;
+        int candidatesWithinTilt = 0;
+        for (int i = 0; i < roots.length; i++) {
+            double phi = Math.atan2(Math.sin(roots[i]), Math.cos(roots[i]));
+            result.candidatePhiDegrees[i] = Math.toDegrees(phi);
+            double cos = Math.cos(phi);
+            double sin = Math.sin(phi);
+            // The full robot-up vector checks both pitch and roll, including +/-90 yaw.
+            double upZ = sin * r02 + cos * r22;
+            double levelError = Math.toDegrees(Math.acos(Math.max(-1.0, Math.min(1.0, upZ))));
+            result.candidateLevelErrorsDegrees[i] = levelError;
+            if (Math.abs(Math.toDegrees(phi)) > maxTiltDegrees + NUMERICAL_TILT_TOLERANCE_DEGREES) {
+                continue;
+            }
+            candidatesWithinTilt++;
+            if (levelError > levelToleranceDegrees) {
+                continue;
+            }
+            double x = position.x * cos - position.z * sin + pivotHeightInches * sin;
+            if (Math.abs(x) <= COINCIDENT_POSE_TOLERANCE) x = 0.0;
+            double heading = Math.atan2(r10, cos * r00 - sin * r20);
+            if (!Double.isFinite(x) || !Double.isFinite(heading)) {
+                continue;
+            }
+            result.usableCandidateCount++;
+            HiveCorrection correction = new HiveCorrection(
+                    new Pose2D(DistanceUnit.INCH, x, position.y, AngleUnit.RADIANS, heading),
+                    -Math.toDegrees(phi), levelError
+            );
+            result.candidates[i] = correction;
+            if (result.correction == null || levelError < result.correction.levelErrorDegrees) {
+                result.correction = correction;
+            }
         }
-        if (levelError > levelToleranceDegrees) {
-            result.status = "Robot level check failed";
-            return result;
-        }
-        double cos = Math.cos(phi);
-        double sin = Math.sin(phi);
-        double x = position.x * cos - position.z * sin + pivotHeightInches * sin;
-        if (Math.abs(x) <= COINCIDENT_POSE_TOLERANCE) x = 0.0;
-        double heading = Math.atan2(r10, cos * r00 - sin * r20);
-        if (!Double.isFinite(x) || !Double.isFinite(heading)) {
-            result.status = "Invalid corrected Limelight pose";
-            return result;
-        }
-        result.correction = new HiveCorrection(
-                new Pose2D(DistanceUnit.INCH, x, position.y, AngleUnit.RADIANS, heading),
-                -Math.toDegrees(phi), levelError);
-        result.candidates[0] = result.correction;
-        result.usableCandidateCount = 1;
-        result.status = "Corrected Limelight field pose ready";
+        result.status = result.correction != null ? "Corrected MT1 field pose ready"
+                : candidatesWithinTilt == 0 ? "HIVE tilt exceeds limit" : "Robot level check failed";
         return result;
     }
 

@@ -12,7 +12,7 @@ public class Shooter extends SubsystemBase {
     private final DcMotorEx leftShooter;
     private final DcMotorEx rightShooter;
     private final Servo pitchServo;
-    private final PIDFController leftController;
+    // Both motors drive one flywheel; only the right encoder supplies speed feedback.
     private final PIDFController rightController;
 
     private double targetVelocity = Double.NaN;
@@ -22,7 +22,6 @@ public class Shooter extends SubsystemBase {
     private double requestedFixedPower;
     private double leftPidOutput;
     private double rightPidOutput;
-    private double stableLeftVelocity = Double.NaN;
     private double stableRightVelocity = Double.NaN;
     private boolean ready;
     private long withinToleranceSinceNanos = -1;
@@ -40,12 +39,6 @@ public class Shooter extends SubsystemBase {
         leftShooter.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
         rightShooter.setMode(DcMotor.RunMode.RUN_WITHOUT_ENCODER);
 
-        leftController = new PIDFController(
-                ShooterConstants.kP,
-                ShooterConstants.kI,
-                ShooterConstants.kD,
-                ShooterConstants.kF
-        );
         rightController = new PIDFController(
                 ShooterConstants.kP,
                 ShooterConstants.kI,
@@ -69,7 +62,6 @@ public class Shooter extends SubsystemBase {
             return true;
         }
         if (!fixedPowerActive || requestedFixedPower != power) {
-            leftController.reset();
             rightController.reset();
             resetReadyState();
         }
@@ -85,36 +77,63 @@ public class Shooter extends SubsystemBase {
     }
 
     public boolean setDistanceTarget(double distanceCm) {
-        if (!areDistanceShotValuesValid() || !Double.isFinite(distanceCm) || distanceCm < 0.0) {
+        double[][] points = getDistanceShotPoints();
+        if (!areDistanceShotValuesValid(points) || !Double.isFinite(distanceCm) || distanceCm < 0.0) {
             stop();
             return false;
         }
-        // Clamp to the measured endpoints; do not extrapolate beyond either shot.
-        double fraction = Range.clip(
-                (distanceCm - ShooterConstants.centerDistanceCm)
-                        / (ShooterConstants.wallDistanceCm - ShooterConstants.centerDistanceCm),
-                0.0, 1.0);
-        double velocity = (1.0 - fraction) * ShooterConstants.centerVelocityTicksPerSecond
-                + fraction * ShooterConstants.wallVelocityTicksPerSecond;
-        double pitch = (1.0 - fraction) * ShooterConstants.centerPitchPosition
-                + fraction * ShooterConstants.wallPitchPosition;
+        double[] lower = null;
+        double[] upper = null;
+        for (double[] point : points) {
+            if (point[0] <= distanceCm && (lower == null || point[0] > lower[0])) lower = point;
+            if (point[0] >= distanceCm && (upper == null || point[0] < upper[0])) upper = point;
+        }
+        // Clamp to the configured endpoints; interpolate only between adjacent points.
+        if (lower == null) lower = upper;
+        if (upper == null) upper = lower;
+        double fraction = lower == upper ? 0.0
+                : (distanceCm - lower[0]) / (upper[0] - lower[0]);
+        double velocity = (1.0 - fraction) * lower[1] + fraction * upper[1];
+        double pitch = (1.0 - fraction) * lower[2] + fraction * upper[2];
         setPitchPosition(pitch);
         setTargetVelocity(velocity);
         return hasTargetVelocity();
     }
 
     public static boolean areDistanceShotValuesValid() {
-        return areVelocityControlValuesCalibrated()
-                && Double.isFinite(ShooterConstants.pitchMinPosition)
-                && Double.isFinite(ShooterConstants.pitchMaxPosition)
-                && ShooterConstants.pitchMinPosition >= 0.0
-                && ShooterConstants.pitchMaxPosition <= 1.0
-                && ShooterConstants.pitchMinPosition <= ShooterConstants.pitchMaxPosition
-                && isDistancePointValid(ShooterConstants.centerDistanceCm,
-                        ShooterConstants.centerVelocityTicksPerSecond, ShooterConstants.centerPitchPosition)
-                && isDistancePointValid(ShooterConstants.wallDistanceCm,
-                        ShooterConstants.wallVelocityTicksPerSecond, ShooterConstants.wallPitchPosition)
-                && ShooterConstants.centerDistanceCm != ShooterConstants.wallDistanceCm;
+        return areDistanceShotValuesValid(getDistanceShotPoints());
+    }
+
+    private static double[][] getDistanceShotPoints() {
+        double[][] additional = ShooterConstants.additionalShotPoints;
+        if (additional == null) return null;
+        double[][] points = new double[additional.length + 2][];
+        points[0] = new double[]{ShooterConstants.centerDistanceCm,
+                ShooterConstants.centerVelocityTicksPerSecond, ShooterConstants.centerPitchPosition};
+        points[1] = new double[]{ShooterConstants.wallDistanceCm,
+                ShooterConstants.wallVelocityTicksPerSecond, ShooterConstants.wallPitchPosition};
+        System.arraycopy(additional, 0, points, 2, additional.length);
+        return points;
+    }
+
+    private static boolean areDistanceShotValuesValid(double[][] points) {
+        if (!areVelocityControlValuesCalibrated() || points == null
+                || !Double.isFinite(ShooterConstants.pitchMinPosition)
+                || !Double.isFinite(ShooterConstants.pitchMaxPosition)
+                || ShooterConstants.pitchMinPosition < 0.0
+                || ShooterConstants.pitchMaxPosition > 1.0
+                || ShooterConstants.pitchMinPosition > ShooterConstants.pitchMaxPosition) {
+            return false;
+        }
+        for (int i = 0; i < points.length; i++) {
+            double[] point = points[i];
+            if (point == null || point.length != 3
+                    || !isDistancePointValid(point[0], point[1], point[2])) return false;
+            for (int j = 0; j < i; j++) {
+                if (point[0] == points[j][0]) return false;
+            }
+        }
+        return true;
     }
 
     private static boolean isDistancePointValid(double distanceCm, double velocity, double pitch) {
@@ -152,7 +171,6 @@ public class Shooter extends SubsystemBase {
                 > ShooterConstants.targetChangeResetThreshold) {
             velocitySettleReferenceTarget = velocityTicksPerSecond;
             resetReadyState();
-            leftController.reset();
             rightController.reset();
         }
 
@@ -173,7 +191,6 @@ public class Shooter extends SubsystemBase {
         leftPidOutput = 0.0;
         rightPidOutput = 0.0;
         resetReadyState();
-        leftController.reset();
         rightController.reset();
         setPower(0.0, 0.0);
     }
@@ -228,7 +245,7 @@ public class Shooter extends SubsystemBase {
             }
             double power = Math.min(requestedFixedPower, ShooterConstants.maxPower);
             setPower(power, power);
-            updateFixedPowerReadyState(getLeftVelocity(), getRightVelocity());
+            updateFixedPowerReadyState(getRightVelocity());
             return;
         }
         if (!areVelocityControlValuesCalibrated()
@@ -238,12 +255,6 @@ public class Shooter extends SubsystemBase {
             return;
         }
 
-        leftController.setPIDF(
-                ShooterConstants.kP,
-                ShooterConstants.kI,
-                ShooterConstants.kD,
-                ShooterConstants.kF
-        );
         rightController.setPIDF(
                 ShooterConstants.kP,
                 ShooterConstants.kI,
@@ -251,41 +262,35 @@ public class Shooter extends SubsystemBase {
                 ShooterConstants.kF
         );
 
-        double leftVelocity = getLeftVelocity();
         double rightVelocity = getRightVelocity();
-        if (!Double.isFinite(leftVelocity) || !Double.isFinite(rightVelocity)) {
+        if (!Double.isFinite(rightVelocity)) {
             stop();
             return;
         }
-        leftPidOutput = leftController.calculate(leftVelocity, targetVelocity);
         rightPidOutput = rightController.calculate(rightVelocity, targetVelocity);
-        if (!Double.isFinite(leftPidOutput) || !Double.isFinite(rightPidOutput)) {
+        leftPidOutput = rightPidOutput;
+        if (!Double.isFinite(rightPidOutput)) {
             stop();
             return;
         }
-        double leftOutput = Range.clip(leftPidOutput, 0.0, ShooterConstants.maxPower);
-        double rightOutput = Range.clip(rightPidOutput, 0.0, ShooterConstants.maxPower);
+        double output = Range.clip(rightPidOutput, 0.0, ShooterConstants.maxPower);
 
-        setPower(leftOutput, rightOutput);
-        updateReadyState(leftVelocity, rightVelocity);
+        setPower(output, output);
+        updateReadyState(rightVelocity);
     }
 
-    private void updateFixedPowerReadyState(double leftVelocity, double rightVelocity) {
-        if (!areReadyValuesValid() || !Double.isFinite(leftVelocity)
-                || !Double.isFinite(rightVelocity) || leftVelocity <= 0.0 || rightVelocity <= 0.0) {
+    private void updateFixedPowerReadyState(double rightVelocity) {
+        if (!areReadyValuesValid() || !Double.isFinite(rightVelocity) || rightVelocity <= 0.0) {
             resetReadyState();
             return;
         }
 
         double tolerance = ready ? ShooterConstants.readyExitTolerance
                 : ShooterConstants.readyEnterTolerance;
-        double maxRelativeChange = Math.max(
-                Math.abs(leftVelocity - stableLeftVelocity) / stableLeftVelocity,
-                Math.abs(rightVelocity - stableRightVelocity) / stableRightVelocity);
+        double relativeChange = Math.abs(rightVelocity - stableRightVelocity) / stableRightVelocity;
         long now = System.nanoTime();
-        if (withinToleranceSinceNanos < 0 || !Double.isFinite(maxRelativeChange)
-                || maxRelativeChange > tolerance) {
-            stableLeftVelocity = leftVelocity;
+        if (withinToleranceSinceNanos < 0 || !Double.isFinite(relativeChange)
+                || relativeChange > tolerance) {
             stableRightVelocity = rightVelocity;
             withinToleranceSinceNanos = now;
             ready = false;
@@ -295,20 +300,17 @@ public class Shooter extends SubsystemBase {
                 >= ShooterConstants.readyStableTimeSeconds;
     }
 
-    private void updateReadyState(double leftVelocity, double rightVelocity) {
-        double maxError = Math.max(
-                Math.abs(targetVelocity - leftVelocity),
-                Math.abs(targetVelocity - rightVelocity)
-        ) / targetVelocity;
+    private void updateReadyState(double rightVelocity) {
+        double relativeError = Math.abs(targetVelocity - rightVelocity) / targetVelocity;
 
         if (ready) {
-            if (maxError > ShooterConstants.readyExitTolerance) {
+            if (relativeError > ShooterConstants.readyExitTolerance) {
                 resetReadyState();
             }
             return;
         }
 
-        if (maxError > ShooterConstants.readyEnterTolerance) {
+        if (relativeError > ShooterConstants.readyEnterTolerance) {
             withinToleranceSinceNanos = -1;
             return;
         }
@@ -326,7 +328,6 @@ public class Shooter extends SubsystemBase {
     private void resetReadyState() {
         ready = false;
         withinToleranceSinceNanos = -1;
-        stableLeftVelocity = Double.NaN;
         stableRightVelocity = Double.NaN;
     }
 

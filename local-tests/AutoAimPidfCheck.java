@@ -43,7 +43,24 @@ public class AutoAimPidfCheck {
         return aim.calculateTurnPower(true, degrees);
     }
 
+    private static void defaultPrecisionRejectsVisibleResidualError() throws Exception {
+        AutoAimController aim = new AutoAimController();
+        Field stableSince = AutoAimController.class.getDeclaredField("withinToleranceSinceNanos");
+        stableSince.setAccessible(true);
+        aim.calculateTurnPower(true, 3.0);
+        stableSince.setLong(aim, System.nanoTime() - 1_000_000_000L);
+        aim.calculateTurnPower(true, 3.0);
+        check(!aim.isLocked(), "three degrees of residual error must not release a shot");
+        aim.calculateTurnPower(true, 1.0);
+        stableSince.setLong(aim, System.nanoTime() - 1_000_000_000L);
+        aim.calculateTurnPower(true, 1.0);
+        check(aim.isLocked(), "one degree of stable residual error may release a shot");
+        aim.calculateTurnPower(true, 3.0);
+        check(!aim.isLocked(), "returning to three degrees clears precision lock");
+    }
+
     public static void main(String[] args) throws Exception {
+        defaultPrecisionRejectsVisibleResidualError();
         double ten = Math.toRadians(10.0);
         gains(0.0, 0.0, 0.02, 0.0);
         AutoAimController aim = new AutoAimController();

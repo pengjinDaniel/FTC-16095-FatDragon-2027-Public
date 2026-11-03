@@ -92,10 +92,6 @@ public abstract class CoordinateAimTestBase extends OpMode {
             turnPower = 0.0;
             drive.stop();
         } else if (aimRequested) {
-            if (vision.wasCorrectionApplied()) {
-                autoAim.reset();
-                positionHold.reset();
-            }
             if (manualTranslation || !vision.isAimCalibrationReady()) {
                 positionHold.reset();
             } else {
@@ -108,9 +104,7 @@ public abstract class CoordinateAimTestBase extends OpMode {
                 strafe = positionHold.getStrafePower();
             }
             turnPower = autoAim.calculateTurnPower(
-                    vision.hasValidAimingTarget(),
-                    vision.getYawErrorDegrees()
-            );
+                    vision.hasValidAimingTarget(), vision.getYawErrorDegrees());
             if (manualTranslation) {
                 drive.moveFieldCentric(forward, strafe, turnPower);
             } else {
@@ -147,9 +141,11 @@ public abstract class CoordinateAimTestBase extends OpMode {
         Pose2D pose = drive.getPose();
         String selectedCell = vision.getSelectedCluster().map(Enum::name).orElse("NONE");
         String controlMode = !started ? "INIT" : stopLatched ? "STOPPED"
-                : aimRequested ? (vision.isAimCalibrationReady() ? "AIMING" : "WAITING_FOR_POSE") : "MANUAL";
+                : !aimRequested ? "MANUAL" : vision.hasValidAimingTarget() ? "ODOMETRY_AIM" : "WAITING_FOR_FIELD_POSE";
 
-        telemetry.addLine("RT: aim with calibration paused | Release RT: 3 stable frames, 1.5 s after success | B: stop | L3: reset forward");
+        telemetry.addLine("RT: Pinpoint aim with vision calibration paused"
+                + " | Release RT: continuous vision correction"
+                + " | B: stop | L3: reset forward");
         telemetry.addData("Control Mode", controlMode);
         telemetry.addData("Target Status", vision.getTargetStatus());
         telemetry.addData("RT Calibration", vision.getRtCalibrationStatus());

@@ -182,7 +182,7 @@ public class VisionCalibrationCheck {
         check(!empty.drive.isFieldPoseInitialized(), "READY odometry alone cannot establish field coordinates");
         check(Double.isNaN(empty.drive.getPose().getX(DistanceUnit.CM)),
                 "uninitialized odometry is never reported as field origin");
-        close(VisionConstants.calibrationIntervalSeconds, 1.5, "production waits 1.5 seconds after success");
+        close(empty.vision.getCalibrationCooldownRemainingSeconds(), 0, "historical calibration has no cooldown");
 
         for (boolean stopped : new boolean[]{false, true}) {
             Samples sample = new Samples();
@@ -192,7 +192,7 @@ public class VisionCalibrationCheck {
             }
             boolean permitted = !stopped;
             check(sample.drive.isFieldPoseInitialized() == permitted, "B stop pauses the stable calibration path");
-            check(sample.pinpoint.writes == (permitted ? 1 : 0), "three permitted frames write exactly once");
+            check(sample.pinpoint.writes == (permitted ? 3 : 0), "each permitted fresh frame calibrates without success cooldown");
             check(sample.vision.hasValidAimingTarget() == permitted, "aiming waits for field initialization");
         }
 
@@ -204,15 +204,19 @@ public class VisionCalibrationCheck {
         try {
             DriveConstants.maximumVisionPositionDifferenceInches = 0;
             DriveConstants.maximumVisionHeadingDifferenceDegrees = 0;
-            check(direct.drive.updateVisionPose(pose(-1000, 500, -90), 2, 1),
-                    "Drive writes a large field-frame correction without a disagreement gate");
+            check(!direct.drive.updateVisionPose(pose(-1000, 500, -90), 2, 1),
+                    "the first over-limit correction is rejected");
+            check(!direct.drive.updateVisionPose(pose(-1000, 500, -90), 3, 2),
+                    "the second over-limit correction is rejected");
+            check(direct.drive.updateVisionPose(pose(-1000, 500, -90), 4, 3),
+                    "the third distinct over-limit correction restores vision priority");
             close(direct.drive.getPose().getX(DistanceUnit.CM), -1000, "external X is applied");
             close(direct.drive.getPose().getHeading(AngleUnit.DEGREES), -90, "external heading is applied");
         } finally {
             DriveConstants.maximumVisionPositionDifferenceInches = positionGate;
             DriveConstants.maximumVisionHeadingDifferenceDegrees = headingGate;
         }
-        check(!direct.drive.updateVisionPose(pose(0, 0, 0), 2, 2), "the same physical frame cannot write twice");
+        check(!direct.drive.updateVisionPose(pose(0, 0, 0), 4, 4), "the same physical frame cannot write twice");
         check(!direct.drive.updateVisionPose(pose(Double.NaN, 0, 0), 3, 3),
                 "nonfinite external poses cannot overwrite valid odometry");
         check(direct.pinpoint.writes == 2, "rejected external writes leave the hardware write count unchanged");
@@ -307,7 +311,9 @@ public class VisionCalibrationCheck {
         }
         sample.pinpoint.position = pose(100, 40, 90);
         close(drive.getDriverHeadingRadians(), Math.PI / 2, "headless follows real IMU rotation");
-        drive.updateVisionPose(pose(100, 40, -90), 3, 2_000_000_000L);
+        for (int i = 0; i < 3; i++) {
+            drive.updateVisionPose(pose(100, 40, -90), i + 3, 2_000_000_000L + i);
+        }
         close(drive.getDriverHeadingRadians(), Math.PI / 2, "vision overwrite cannot rotate the driver reference");
         drive.resetDriverHeading();
         close(drive.getDriverHeadingRadians(), 0, "L3 resets the headless forward direction");

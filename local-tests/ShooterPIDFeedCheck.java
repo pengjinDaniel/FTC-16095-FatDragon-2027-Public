@@ -74,7 +74,8 @@ public class ShooterPIDFeedCheck {
         Field field = ShooterDistanceCheck.class.getDeclaredField("velocities");
         field.setAccessible(true);
         double[] velocities = (double[]) field.get(null);
-        velocities[0] = velocities[1] = 1500.0;
+        velocities[0] = 0.0;
+        velocities[1] = 1500.0;
         TestDrive drive = (TestDrive) allocator.allocateInstance(TestDrive.class);
         TestIntake intake = (TestIntake) allocator.allocateInstance(TestIntake.class);
         Transit transit = (Transit) allocator.allocateInstance(Transit.class);

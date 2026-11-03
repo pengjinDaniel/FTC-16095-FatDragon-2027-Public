@@ -2,22 +2,34 @@ package org.firstinspires.ftc.teamcode.subsystems.vision;
 
 import com.arcrobotics.ftclib.gamepad.GamepadEx;
 import com.qualcomm.hardware.gobilda.GoBildaPinpointDriver.DeviceStatus;
+import com.qualcomm.hardware.limelightvision.LLResult;
+import com.qualcomm.hardware.limelightvision.LLResultTypes;
+import com.qualcomm.hardware.limelightvision.Limelight3A;
+import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.Gamepad;
+import com.qualcomm.robotcore.hardware.Servo;
+import com.qualcomm.robotcore.util.ElapsedTime;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.lang.reflect.Proxy;
+import java.util.Collections;
+import java.util.List;
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.Pose2D;
+import org.firstinspires.ftc.robotcore.external.navigation.Pose3D;
+import org.firstinspires.ftc.robotcore.external.navigation.Position;
+import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles;
 import org.firstinspires.ftc.teamcode.commands.ShootAssistCommand;
 import org.firstinspires.ftc.teamcode.subsystems.drive.AutoAimController;
 import org.firstinspires.ftc.teamcode.subsystems.drive.Drive;
-import org.firstinspires.ftc.teamcode.subsystems.drive.DriveConstants;
 import org.firstinspires.ftc.teamcode.subsystems.intake.Intake;
 import org.firstinspires.ftc.teamcode.subsystems.shooter.Shooter;
 import org.firstinspires.ftc.teamcode.subsystems.transit.Transit;
+import org.firstinspires.ftc.teamcode.subsystems.transit.TransitConstants;
 import sun.misc.Unsafe;
 
-/** Replays idle three-frame calibration, success-only cooldown and RT odometry aiming. */
+/** Replays continuous idle calibration, paused RT calibration and odometry aiming. */
 public class RtCalibrationCheck {
     private static final Unsafe U = allocator();
     private static int checks;
@@ -25,21 +37,21 @@ public class RtCalibrationCheck {
 
     private static Unsafe allocator() {
         try {
-            Field f = Unsafe.class.getDeclaredField("theUnsafe");
-            f.setAccessible(true);
-            return (Unsafe) f.get(null);
-        } catch (Exception e) { throw new AssertionError(e); }
+            Field field = Unsafe.class.getDeclaredField("theUnsafe");
+            field.setAccessible(true);
+            return (Unsafe) field.get(null);
+        } catch (Exception error) { throw new AssertionError(error); }
     }
 
     private static void set(Object object, Class<?> owner, String name, Object value) throws Exception {
-        Field f = owner.getDeclaredField(name);
-        f.setAccessible(true);
-        f.set(object, value);
+        Field field = owner.getDeclaredField(name);
+        field.setAccessible(true);
+        field.set(object, value);
     }
 
-    private static void check(boolean value, String message) {
+    private static void check(boolean condition, String message) {
         checks++;
-        if (!value) throw new AssertionError(message);
+        if (!condition) throw new AssertionError(message);
     }
 
     private static void near(double actual, double expected, String message) {
@@ -47,10 +59,9 @@ public class RtCalibrationCheck {
                 message + ": expected " + expected + ", got " + actual);
     }
 
-    private static Pose2D pose(double x, double y, double h) {
-        return new Pose2D(DistanceUnit.CM, x, y, AngleUnit.DEGREES, h);
+    private static Pose2D pose(double x, double y, double heading) {
+        return new Pose2D(DistanceUnit.CM, x, y, AngleUnit.DEGREES, heading);
     }
-
 
     private static class CaptureDrive extends Drive {
         double forward, strafe, turn;
@@ -62,21 +73,11 @@ public class RtCalibrationCheck {
         }
     }
 
-    private static class FlakyPinpoint extends VisionCalibrationCheck.FakePinpoint {
-        boolean failNextWrite;
-        @Override public void setPosition(Pose2D value) {
-            super.setPosition(value);
-            if (failNextWrite) {
-                failNextWrite = false;
-                status = DeviceStatus.CALIBRATING;
-            }
-        }
-    }
-
     private static class Fixture {
         final Vision vision = (Vision) U.allocateInstance(Vision.class);
         final CaptureDrive drive = (CaptureDrive) U.allocateInstance(CaptureDrive.class);
-        final FlakyPinpoint pp = (FlakyPinpoint) U.allocateInstance(FlakyPinpoint.class);
+        final VisionCalibrationCheck.FakePinpoint pp = (VisionCalibrationCheck.FakePinpoint)
+                U.allocateInstance(VisionCalibrationCheck.FakePinpoint.class);
         final Method clear = Vision.class.getDeclaredMethod("clearCurrentFrame");
 
         Fixture() throws Exception {
@@ -89,43 +90,30 @@ public class RtCalibrationCheck {
             clear.setAccessible(true);
         }
 
-        void frame(Pose2D visual, double hive, double timestamp, Pose2D odometry,
-                   boolean rt, boolean stopped, long now) throws Exception {
-            if (odometry != null) pp.position = odometry;
+        void frame(Pose2D visual, double timestamp, boolean rt, boolean stopped, long now) throws Exception {
             drive.periodic();
             clear.invoke(vision);
             if (visual != null) {
                 VisionMath.HiveSolveResult result = new VisionMath.HiveSolveResult();
-                result.correction = new VisionMath.HiveCorrection(visual, hive, 0);
-                result.candidates[0] = result.correction;
-                result.usableCandidateCount = 1;
+                result.correction = new VisionMath.HiveCorrection(visual, -30, 0);
                 result.status = "Synthetic current vision";
                 set(vision, Vision.class, "hiveSolveResult", result);
                 set(vision, Vision.class, "frameTimestamp", timestamp);
-                set(vision, Vision.class, "lastPhysicalFrameTimestamp", timestamp);
             }
             vision.updateAimTarget(drive, stopped, rt, now);
         }
 
-        void normal(Pose2D visual, double hive, double timestamp, Pose2D odometry, long now) throws Exception {
-            frame(visual, hive, timestamp, odometry, false, false, now);
+        void rt(Pose2D visual, double timestamp, long now) throws Exception {
+            frame(visual, timestamp, true, false, now);
         }
 
-        void rt(Pose2D visual, double hive, double timestamp, Pose2D odometry, long now) throws Exception {
-            frame(visual, hive, timestamp, odometry, true, false, now);
-        }
-
-        void initialize() throws Exception {
-            for (int i = 0; i < 3; i++) {
-                normal(FIXED, -30, i + 1, pose(0, 0, 0), i * 20_000_000L);
-            }
-        }
+        void initialize() throws Exception { frame(FIXED, 1, false, false, 0); }
     }
 
     private static class ReadyShooter extends Shooter {
         ReadyShooter() { super(null); }
         @Override public void stop() { }
-        @Override public boolean setDistanceTarget(double distance) { return Double.isFinite(distance); }
+        @Override public boolean setDistanceTarget(double cm) { return Double.isFinite(cm); }
         @Override public boolean isReady() { return true; }
         @Override public boolean isPitchReady() { return true; }
     }
@@ -133,269 +121,274 @@ public class RtCalibrationCheck {
     private static class QuietIntake extends Intake {
         QuietIntake() { super(null); }
         @Override public void updateInputs(boolean requested, boolean jam, boolean shoot) { }
+        @Override public void clearBallCount() { }
+        @Override public void suspend() { }
     }
 
-    private static class ReadyTransit extends Transit {
-        boolean feeding;
-        ReadyTransit() { super(null); }
-        @Override public TransitState getState() { return TransitState.CLOSE; }
-        @Override public void cancelFeeding() { feeding = false; }
-        @Override public void requestFeed(boolean permitted) { feeding = permitted; }
-    }
-
-    private static class LockedAim extends AutoAimController {
-        int resets;
-        @Override public double calculateTurnPower(boolean valid, double error) { return valid ? .123 : 0; }
-        @Override public boolean isLocked() { return true; }
-        @Override public void reset() { resets++; super.reset(); }
-    }
-
-
-
-    private static void threeFramesThenCooldown() throws Exception {
+    private static void continuousIdleCalibration() throws Exception {
         Fixture f = new Fixture();
-        f.normal(FIXED, -30, 1, pose(0, 0, 0), 0);
-        check(f.pp.writes == 0 && !f.drive.isFieldPoseInitialized(), "first idle frame cannot overwrite the pose");
-        for (int i = 0; i < 10; i++) f.normal(FIXED, -30, 1, null, 1_000_000L + i);
-        check(f.pp.writes == 0, "reading one frame repeatedly cannot confirm calibration");
-        f.normal(FIXED, -30, 2, null, 20_000_000L);
-        check(f.pp.writes == 0, "second idle frame cannot overwrite the pose");
-        f.normal(FIXED, -30, 3, null, 40_000_000L);
-        check(f.pp.writes == 1 && f.drive.isFieldPoseInitialized(), "third stable idle frame writes once");
-        near(VisionConstants.calibrationIntervalSeconds, 1.5, "production success cooldown is 1.5 seconds");
-        near(f.vision.getCalibrationCooldownRemainingSeconds(), 1.5, "successful write starts cooldown");
-        long deadline = 1_540_000_000L;
-        Pose2D next = pose(200, -100, 40);
-        f.normal(next, 30, 4, null, 100_000_000L);
-        f.normal(next, 30, 5, null, deadline - 1);
-        check(f.pp.writes == 1, "cooldown blocks both collection and writes");
-        f.normal(next, 30, 5, null, deadline);
-        near(f.vision.getCalibrationCooldownRemainingSeconds(), 0, "cooldown expires from the last successful write");
-        f.normal(next, 30, 6, null, deadline + 20_000_000L);
-        f.normal(next, 30, 7, null, deadline + 40_000_000L);
-        check(f.pp.writes == 1, "frames observed during cooldown cannot join the next window");
-        f.normal(next, 30, 8, null, deadline + 60_000_000L);
-        check(f.pp.writes == 2, "three fresh post-cooldown frames write once");
-        near(f.drive.getPose().getX(DistanceUnit.CM), 200, "large absolute odometry disagreement is still overwritten");
-        near(f.drive.getPose().getHeading(AngleUnit.DEGREES), 40, "latest visual heading is applied");
-        long secondDeadline = deadline + 60_000_000L + 1_500_000_000L;
-        f.normal(next, 30, 8, null, secondDeadline);
-        check(f.pp.writes == 2, "an already accepted physical frame cannot overwrite twice");
-        near(f.vision.getCalibrationCooldownRemainingSeconds(), 0, "duplicates do not restart cooldown");
-    }
-
-    private static void failuresRetryWithoutCooldown() throws Exception {
-        Fixture f = new Fixture();
-        f.normal(FIXED, -30, 1, pose(0, 0, 0), 0);
-        f.normal(null, 0, 0, null, 20_000_000L);
-        near(f.vision.getCalibrationCooldownRemainingSeconds(), 0, "missing vision cannot start cooldown");
-        for (int i = 0; i < 3; i++) f.normal(FIXED, -30, i + 2, null, 40_000_000L + i * 20_000_000L);
-        check(f.pp.writes == 1, "valid samples retry immediately after missing vision");
-
-        Fixture outlier = new Fixture();
-        outlier.normal(FIXED, -30, 1, pose(0, 0, 0), 0);
-        outlier.normal(pose(102, 40, 0), -30, 2, null, 20_000_000L);
-        outlier.normal(pose(104, 40, 0), -30, 3, null, 40_000_000L);
-        check(outlier.pp.writes == 0, "the full three-frame spread is checked against its anchor");
-        near(outlier.vision.getCalibrationCooldownRemainingSeconds(), 0, "unstable observations cannot start cooldown");
-        outlier.normal(pose(104, 40, 0), -30, 4, null, 60_000_000L);
-        outlier.normal(pose(104, 40, 0), -30, 5, null, 80_000_000L);
-        check(outlier.pp.writes == 1, "a replacement stable window retries without a 1.5-second delay");
-
-        Fixture failedWrite = new Fixture();
-        failedWrite.normal(FIXED, -30, 1, pose(0, 0, 0), 0);
-        failedWrite.normal(FIXED, -30, 2, null, 20_000_000L);
-        failedWrite.pp.failNextWrite = true;
-        failedWrite.normal(FIXED, -30, 3, null, 40_000_000L);
-        check(!failedWrite.drive.isFieldPoseInitialized(), "a failed write readback cannot establish field coordinates");
-        near(failedWrite.vision.getCalibrationCooldownRemainingSeconds(), 0, "a failed write cannot start cooldown");
-        failedWrite.pp.status = DeviceStatus.READY;
-        for (int i = 0; i < 3; i++) failedWrite.normal(FIXED, -30, i + 4, null, 60_000_000L + i * 20_000_000L);
-        check(failedWrite.pp.writes == 2 && failedWrite.drive.isFieldPoseInitialized(),
-                "a failed write retries a new stable window immediately");
-    }
-
-    private static void motionAndFrameContinuity() throws Exception {
-        Fixture moving = new Fixture();
-        double offset = Math.toRadians(20);
-        for (int i = 0; i < 3; i++) {
-            double dx = i * 2, dy = i;
-            Pose2D odometry = pose(500 + dx, -200 + dy, 170 + i * 20);
-            Pose2D visual = pose(100 + Math.cos(offset) * dx - Math.sin(offset) * dy,
-                    40 + Math.sin(offset) * dx + Math.cos(offset) * dy, -170 + i * 20);
-            moving.normal(visual, -30, i + 1, odometry, i * 20_000_000L);
+        f.initialize();
+        f.pp.headingVelocity = 90;
+        for (int i = 2; i <= 4; i++) {
+            f.frame(pose(100 + i, 40, i), i, false, false, i * 20_000_000L);
+            check(f.pp.writes == i, "each idle fresh frame calibrates without waiting for a stable batch");
+            near(f.drive.getPose().getX(DistanceUnit.CM), 100 + i, "idle calibration applies current visual X");
         }
-        check(moving.pp.writes == 1, "motion compensation accepts translation, turning, heading wrap and a large field offset");
-        near(moving.drive.getPose().getHeading(AngleUnit.DEGREES), -130, "the latest moving frame is applied");
-
-        Fixture heading = new Fixture();
-        heading.normal(FIXED, -30, 1, pose(0, 0, 0), 0);
-        heading.normal(pose(100, 40, 10), -30, 2, null, 20_000_000L);
-        heading.normal(FIXED, -30, 3, null, 40_000_000L);
-        heading.normal(FIXED, -30, 4, null, 60_000_000L);
-        check(heading.pp.writes == 0, "a visual heading jump restarts the window");
-        heading.normal(FIXED, -30, 5, null, 80_000_000L);
-        check(heading.pp.writes == 1, "stable heading observations recover without cooldown");
-
-        Fixture hive = new Fixture();
-        hive.normal(FIXED, -30, 1, pose(0, 0, 0), 0);
-        hive.normal(FIXED, -25, 2, null, 20_000_000L);
-        hive.normal(FIXED, -25, 3, null, 40_000_000L);
-        check(hive.pp.writes == 0, "HIVE-angle changes restart the window");
-        hive.normal(FIXED, -25, 4, null, 60_000_000L);
-        check(hive.pp.writes == 1, "stable new HIVE geometry can calibrate");
-
-        Fixture gap = new Fixture();
-        gap.normal(FIXED, -30, 10, pose(0, 0, 0), 0);
-        gap.normal(FIXED, -30, 11, null, 20_000_000L);
-        gap.normal(FIXED, -30, 1, null, 240_000_000L);
-        gap.normal(FIXED, -30, 2, null, 260_000_000L);
-        check(gap.pp.writes == 0, "a stale gap and camera clock restart cannot reuse old samples");
-        gap.normal(FIXED, -30, 3, null, 280_000_000L);
-        check(gap.pp.writes == 1, "three new frames recover after a camera restart");
+        f.frame(FIXED, 4, false, false, 100_000_000L);
+        check(f.pp.writes == 4, "duplicate idle frames cannot write twice");
+        f.frame(null, 0, false, false, 120_000_000L);
+        check(f.pp.writes == 4, "missing vision leaves odometry unchanged");
+        f.frame(FIXED, 5, false, false, 140_000_000L);
+        check(f.pp.writes == 5, "idle calibration resumes on the next valid frame");
     }
 
-    private static void rtNeverCalibratesAndClearsPartialWindows() throws Exception {
+    private static void rtUsesOnlyOdometry() throws Exception {
         Fixture f = new Fixture();
         f.initialize();
-        f.normal(pose(150, -50, 20), 30, 4, null, 1_560_000_000L);
-        f.normal(pose(150, -50, 20), 30, 5, null, 1_580_000_000L);
-        int before = f.pp.writes;
-        f.rt(pose(-500, 400, 90), -30, 6, null, 1_600_000_000L);
-        CellCluster held = f.vision.getSelectedCluster().orElse(null);
-        double openingX = f.vision.getTargetXInches();
-        for (int i = 0; i < 6; i++) {
-            f.rt(pose(-500, 400, 90), -30, i + 7, null, 1_620_000_000L + i * 20_000_000L);
-            check(f.pp.writes == before && !f.vision.wasCorrectionApplied(), "RT never writes even when stable tags are visible");
+        f.rt(pose(-200, -200, -90), 2, 20_000_000L);
+        check(f.vision.hasValidAimingTarget() && f.vision.isAimCalibrationReady()
+                        && !f.vision.shouldPauseForAimCalibration(),
+                "RT aims immediately from initialized odometry without five-frame sampling");
+        check(f.pp.writes == 1, "the RT rising edge cannot write a vision correction");
+        double error = f.vision.getYawErrorDegrees();
+        double distance = f.vision.getTagCenterHorizontalDistanceInches();
+        for (int i = 0; i < 8; i++) {
+            f.rt(pose(-200 + i, -200, 90), 3 + i, 40_000_000L + i * 20_000_000L);
+            near(f.vision.getYawErrorDegrees(), error, "held RT ignores changing visual yaw and position");
+            near(f.vision.getTagCenterHorizontalDistanceInches(), distance, "held RT measures distance from OD");
+            check(f.vision.getSelectedCluster().get() == CellCluster.BLUE_AUDIENCE,
+                    "the OD field half selects the CELL during RT");
         }
-        f.rt(null, 0, 0, pose(-90, 40, 10), 4_000_000_000L);
-        check(f.vision.isAimCalibrationReady() && f.vision.hasValidAimingTarget(), "long RT holds keep aiming through tag loss without a search timeout");
-        check(f.vision.getSelectedCluster().orElse(null) == held, "RT retains the selected CELL across the field center");
-        near(f.vision.getTargetXInches(), openingX, "RT retains HIVE geometry");
-        near(f.drive.getPose().getX(DistanceUnit.CM), -90, "Pinpoint continues moving during RT");
-        f.normal(pose(200, -100, 40), -30, 13, null, 4_020_000_000L);
-        f.normal(pose(200, -100, 40), -30, 14, null, 4_040_000_000L);
-        check(f.pp.writes == before, "release cannot reuse pre-RT or RT-held samples");
-        f.normal(pose(200, -100, 40), -30, 15, null, 4_060_000_000L);
-        check(f.pp.writes == before + 1, "three fresh release frames resume calibration");
-    }
-
-    private static void cooldownRunsWhileRtIsHeld() throws Exception {
-        Fixture f = new Fixture();
-        f.initialize();
-        f.rt(FIXED, -30, 4, null, 60_000_000L);
-        f.normal(FIXED, -30, 5, null, 1_000_000_000L);
-        check(f.pp.writes == 1, "RT release cannot bypass an unfinished success cooldown");
-        near(f.vision.getCalibrationCooldownRemainingSeconds(), .54, "cooldown is measured from success rather than RT release");
-        f.normal(FIXED, -30, 6, null, 1_540_000_000L);
-        f.normal(FIXED, -30, 7, null, 1_560_000_000L);
-        check(f.pp.writes == 1, "expiry starts a new three-frame window");
-        f.normal(FIXED, -30, 8, null, 1_580_000_000L);
-        check(f.pp.writes == 2, "cooldown elapsed during RT is not restarted");
-    }
-
-    private static void rtUsesNormalPidImmediately() throws Exception {
-        Fixture f = new Fixture();
-        f.initialize();
-        f.rt(null, 0, 0, null, 60_000_000L);
-        AutoAimController aim = new AutoAimController();
-        AutoAimController reference = new AutoAimController();
-        ReadyTransit transit = (ReadyTransit) U.allocateInstance(ReadyTransit.class);
-        Gamepad gamepad = (Gamepad) U.allocateInstance(Gamepad.class);
-        gamepad.left_stick_y = -.3f;
-        ShootAssistCommand command = new ShootAssistCommand(f.drive,
-                (ReadyShooter) U.allocateInstance(ReadyShooter.class),
-                (QuietIntake) U.allocateInstance(QuietIntake.class), transit, f.vision,
-                aim, new GamepadEx(gamepad));
-        command.initialize();
-        double expected = reference.calculateTurnPower(true, f.vision.getYawErrorDegrees());
-        command.execute();
-        near(f.drive.turn, expected, "RT uses normal PID immediately rather than fixed-direction search");
-        check(Math.hypot(f.drive.forward, f.drive.strafe) > 0, "RT manual translation remains headless");
-        double heading = f.vision.getDesiredHeadingDegrees();
-        f.rt(null, 0, 0, pose(100, 40, heading), 80_000_000L);
-        command.execute(); command.execute();
-        near(f.drive.turn, 0, "RT can stop at its existing coordinate target without a new tag");
-        set(aim, AutoAimController.class, "withinToleranceSinceNanos",
-                System.nanoTime() - (long) ((DriveConstants.aimLockStableTimeSeconds + .01) * 1_000_000_000L));
-        command.execute();
-        check(aim.isLocked() && transit.feeding && command.canPrepareToFire(), "odometry aim can lock and fire through tag loss");
-        f.pp.status = DeviceStatus.CALIBRATING;
-        f.rt(null, 0, 0, null, 100_000_000L);
-        command.execute();
-        near(f.drive.turn, 0, "Pinpoint loss stops automatic rotation");
-        check(!transit.feeding, "Pinpoint loss cancels feeding");
-    }
-
-    private static void coldRtAndBStop() throws Exception {
+        check(f.pp.writes == 1, "held RT never calibrates, including after five new frames");
+        f.pp.position = pose(-100, 40, 15);
+        f.rt(FIXED, 11, 220_000_000L);
+        check(f.vision.getSelectedCluster().get() == CellCluster.BLUE_OPPOSITE_AUDIENCE,
+                "OD motion changes the live CELL selection");
+        near(f.vision.getYawErrorDegrees(), VisionMath.coordinateYawErrorDegrees(
+                f.pp.position, -17.7, 12.75, VisionConstants.shooterYawDegrees),
+                "current OD pose controls yaw during RT");
+        for (long now : new long[]{240_000_000L, 340_000_000L, 1_000_000_000L}) {
+            f.rt(null, 0, now);
+            check(f.vision.hasValidAimingTarget(), "tag loss does not pause valid OD aiming");
+        }
+        f.frame(pose(-100, 40, 15), 11, false, false, 1_020_000_000L);
+        check(f.pp.writes == 2, "RT release can immediately calibrate a still-fresh unprocessed frame");
         Fixture cold = new Fixture();
-        for (int i = 0; i < 5; i++) cold.rt(FIXED, -30, i + 1, pose(0, 0, 0), i * 20_000_000L);
-        check(cold.pp.writes == 0 && !cold.drive.isFieldPoseInitialized() && !cold.vision.hasValidAimingTarget(),
-                "RT cannot initialize a cold field pose even with visible tags");
-        for (int i = 0; i < 3; i++) cold.normal(FIXED, -30, i + 6, null, 100_000_000L + i * 20_000_000L);
-        check(cold.pp.writes == 1 && cold.drive.isFieldPoseInitialized(), "release allows three-frame field initialization");
-        cold.rt(null, 0, 0, null, 160_000_000L);
-        check(cold.vision.isAimCalibrationReady(), "the next RT press needs no new visual confirmation");
-
-        Fixture stopped = new Fixture();
-        stopped.initialize();
-        stopped.frame(FIXED, -30, 4, null, true, true, 60_000_000L);
-        stopped.rt(FIXED, -30, 5, null, 80_000_000L);
-        check(!stopped.vision.hasValidAimingTarget() && stopped.pp.writes == 1, "B stop stays latched through the RT hold");
-        stopped.normal(FIXED, -30, 6, null, 100_000_000L);
-        stopped.rt(null, 0, 0, null, 120_000_000L);
-        check(stopped.vision.hasValidAimingTarget(), "RT release clears B stop without requiring a new RT correction");
+        cold.rt(FIXED, 1, 0);
+        check(!cold.vision.hasValidAimingTarget() && cold.pp.writes == 0,
+                "RT cannot initialize an unknown field pose even with visible tags");
     }
 
-    private static void pinpointFaultDiagnosticsAndRecovery() throws Exception {
-        for (DeviceStatus status : DeviceStatus.values()) {
-            if (status == DeviceStatus.READY) continue;
-            Fixture fault = new Fixture();
-            fault.initialize();
-            fault.pp.status = status;
-            fault.normal(FIXED, -30, 4, null, 2_000_000_000L);
-            check(!fault.drive.isFieldPoseInitialized() && fault.pp.writes == 1,
-                    "a Pinpoint fault invalidates field coordinates without a vision write");
-            check(fault.vision.getCalibrationStatus().contains("Pinpoint")
-                            && fault.vision.getCalibrationStatus().contains(status.name()),
-                    "valid vision must report the actual Pinpoint blocker: " + status);
-            check(!Double.isFinite(fault.drive.getPose().getX(DistanceUnit.CM)),
-                    "a failed device cannot expose stale field coordinates to control");
-            check(fault.drive.getOdometryStatus() == status
-                            && fault.drive.getRawOdometryPose() == fault.pp.position,
-                    "diagnostics expose cached device values without making them valid for control");
-            fault.pp.status = DeviceStatus.READY;
-            for (int i = 0; i < 3; i++) {
-                fault.normal(FIXED, -30, i + 5, null, 2_020_000_000L + i * 20_000_000L);
-            }
-            check(fault.drive.isFieldPoseInitialized() && fault.pp.writes == 2,
-                    "a recovered device automatically reinitializes after three fresh frames");
+    private static void rtFaultAndStop() throws Exception {
+        Fixture f = new Fixture();
+        f.initialize();
+        f.rt(FIXED, 2, 40_000_000L);
+        f.frame(FIXED, 3, true, true, 60_000_000L);
+        f.rt(FIXED, 4, 80_000_000L);
+        check(!f.vision.isAimCalibrationReady() && !f.vision.hasValidAimingTarget(),
+                "B stays latched until RT release");
+        check(f.pp.writes == 1, "held RT and latched B never calibrate");
+        f.frame(FIXED, 5, false, false, 100_000_000L);
+        f.rt(FIXED, 6, 120_000_000L);
+        check(f.vision.hasValidAimingTarget() && f.pp.writes == 2,
+                "RT release calibrates once and the next RT press pauses again");
+        f.pp.status = DeviceStatus.FAULT_BAD_READ;
+        f.rt(FIXED, 7, 140_000_000L);
+        check(!f.vision.hasValidAimingTarget() && f.pp.writes == 2,
+                "Pinpoint faults invalidate OD aiming without recalibrating during RT");
+        f.pp.status = DeviceStatus.READY;
+        f.rt(FIXED, 8, 160_000_000L);
+        check(!f.vision.hasValidAimingTarget() && f.pp.writes == 2,
+                "a recovered Pinpoint still waits for RT release before visual initialization");
+        f.frame(FIXED, 9, false, false, 180_000_000L);
+        check(f.vision.hasValidAimingTarget() && f.pp.writes == 3,
+                "release restores field initialization from the next valid frame");
+    }
+
+    private static void odometryLockAndTagLossFeed() throws Exception {
+        Fixture f = new Fixture();
+        f.initialize();
+        double heading = Math.IEEEremainder(Math.toDegrees(Math.atan2(
+                12.75 * 2.54 - 40, 17.7 * 2.54 - 100)) - 180, 360);
+        Pose2D aligned = pose(100, 40, heading);
+        f.frame(aligned, 2, false, false, 10_000_000L);
+        AutoAimController aim = new AutoAimController();
+        ReadyShooter shooter = (ReadyShooter) U.allocateInstance(ReadyShooter.class);
+        QuietIntake intake = (QuietIntake) U.allocateInstance(QuietIntake.class);
+        Transit transit = (Transit) U.allocateInstance(Transit.class);
+        double[] motorPower = {0};
+        DcMotor motor = (DcMotor) Proxy.newProxyInstance(DcMotor.class.getClassLoader(),
+                new Class<?>[]{DcMotor.class}, (proxy, method, args) -> {
+                    if (method.getName().equals("setPower")) { motorPower[0] = (double) args[0]; return null; }
+                    throw new AssertionError(method);
+                });
+        Servo servo = (Servo) Proxy.newProxyInstance(Servo.class.getClassLoader(),
+                new Class<?>[]{Servo.class}, (proxy, method, args) -> null);
+        set(transit, Transit.class, "transitMotor", motor);
+        set(transit, Transit.class, "limitServo", servo);
+        set(transit, Transit.class, "feedReverseTimer", new ElapsedTime());
+        set(transit, Transit.class, "transitState", Transit.TransitState.CLOSE);
+        TransitConstants.limitPositionsCalibrated = true;
+        TransitConstants.feedReverseTime = 0.0;
+        Gamepad gamepad = (Gamepad) U.allocateInstance(Gamepad.class);
+        ShootAssistCommand command = new ShootAssistCommand(
+                f.drive, shooter, intake, transit, f.vision, aim, new GamepadEx(gamepad));
+        command.initialize();
+        f.rt(null, 0, 20_000_000L);
+        command.execute();
+        check(!aim.isLocked() && transit.getState() == Transit.TransitState.CLOSE,
+                "OD aiming still requires the existing stable lock interval");
+        set(aim, AutoAimController.class, "withinToleranceSinceNanos", System.nanoTime() - 1_000_000_000L);
+        command.execute();
+        check(aim.isLocked() && command.canPrepareToFire() && command.canFire()
+                        && transit.getState() == Transit.TransitState.OPEN,
+                "stable OD aim can feed without a visible tag");
+        f.rt(pose(-200, -200, 90), 3, 60_000_000L);
+        command.execute();
+        check(aim.isLocked() && command.canFire() && f.pp.writes == 2,
+                "visible vision cannot alter a locked OD shot while RT is held");
+        f.rt(null, 0, 80_000_000L);
+        command.execute();
+        check(aim.isLocked() && command.canFire(), "tag loss preserves valid OD aim and the existing feed sequence");
+        f.pp.status = DeviceStatus.FAULT_BAD_READ;
+        f.rt(aligned, 4, 100_000_000L);
+        command.execute();
+        near(motorPower[0], 0, "invalid OD explicitly stops the committed feeder");
+        check(!aim.isLocked() && transit.getState() == Transit.TransitState.CLOSE,
+                "invalid field position clears lock and closes the feed gate");
+        command.end(true);
+        near(f.drive.turn, 0, "ending RT stops turning");
+    }
+
+    private static class Camera extends Limelight3A {
+        Frame frame;
+        Camera() { super(null, "test", null); }
+        @Override public boolean isConnected() { return true; }
+        @Override public LLResult getLatestResult() { return frame; }
+    }
+
+    private static class Tag extends LLResultTypes.FiducialResult {
+        int id;
+        Tag() throws Exception { super(null); }
+        @Override public int getFiducialId() { return id; }
+        @Override public double getTargetArea() { return .01; }
+        @Override public Pose3D getTargetPoseRobotSpace() { return null; }
+    }
+
+    private static class Frame extends LLResult {
+        double timestamp;
+        int pipeline;
+        long age;
+        Tag tag;
+        Tag otherTag;
+        Frame() throws Exception { super(null); }
+        @Override public boolean isValid() { return true; }
+        @Override public int getPipelineIndex() { return pipeline; }
+        @Override public long getStaleness() { return age; }
+        @Override public double getTimestamp() { return timestamp; }
+        @Override public double getBotposeAvgDist() { return 1; }
+        @Override public double getBotposeSpan() { return 0; }
+        @Override public double getBotposeAvgArea() { return 1; }
+        @Override public double[] getStddevMt1() { return null; }
+        @Override public List<LLResultTypes.FiducialResult> getFiducialResults() {
+            return otherTag == null ? Collections.singletonList(tag) : java.util.Arrays.asList(tag, otherTag);
         }
-        Fixture invalid = new Fixture();
-        invalid.initialize();
-        invalid.normal(FIXED, -30, 4, pose(Double.NaN, 0, 0), 2_000_000_000L);
-        check(!invalid.drive.isFieldPoseInitialized() && invalid.pp.writes == 1,
-                "READY with non-finite odometry still blocks calibration");
-        check(invalid.vision.getCalibrationStatus().contains("Pinpoint")
-                        && invalid.vision.getCalibrationStatus().contains("invalid X/Y/H"),
-                "invalid odometry must not be labeled as a Limelight failure");
-        for (int i = 0; i < 3; i++) {
-            invalid.normal(FIXED, -30, i + 5, pose(0, 0, 0), 2_020_000_000L + i * 20_000_000L);
+        @Override public int getBotposeTagCount() { return otherTag == null ? 1 : 2; }
+        @Override public Pose3D getBotpose() {
+            return new Pose3D(new Position(DistanceUnit.CM, 100, 40, 0, 0),
+                    new YawPitchRollAngles(AngleUnit.DEGREES, 0, 0, 0, 0));
         }
-        check(invalid.drive.isFieldPoseInitialized() && invalid.pp.writes == 2,
-                "finite odometry recovery still requires the existing three-frame window");
+    }
+
+    private static void frozenStaleAndWrongPipeline() throws Exception {
+        Fixture f = new Fixture();
+        Camera camera = (Camera) U.allocateInstance(Camera.class);
+        Frame frame = (Frame) U.allocateInstance(Frame.class);
+        frame.tag = (Tag) U.allocateInstance(Tag.class);
+        frame.tag.id = 38;
+        frame.timestamp = 1;
+        camera.frame = frame;
+        set(f.vision, Vision.class, "limelight", camera);
+        f.vision.update();
+        f.vision.updateAimTarget(f.drive, false, false, 0);
+        check(f.drive.isFieldPoseInitialized() && f.pp.writes == 1,
+                "one real SDK-style idle frame initializes the field pose");
+        set(f.vision, Vision.class, "lastPhysicalFrameSeenNanos", System.nanoTime() - 300_000_000L);
+        f.vision.update();
+        f.vision.updateAimTarget(f.drive, false, false, 20_000_000L);
+        check(!f.vision.getCorrectedRobotFieldPose().isPresent() && f.vision.getPoseStatus().contains("frozen"),
+                "a frozen camera is invalid even with fresh HTTP reception");
+        frame.timestamp = 2;
+        frame.age = VisionConstants.maxResultAgeMs + 1;
+        f.vision.update();
+        f.vision.updateAimTarget(f.drive, false, false, 40_000_000L);
+        check(f.pp.writes == 1, "stale reception cannot calibrate odometry");
+        frame.age = 0;
+        frame.pipeline = 1;
+        f.vision.update();
+        f.vision.updateAimTarget(f.drive, false, false, 60_000_000L);
+        check(f.pp.writes == 1, "the wrong alliance pipeline cannot calibrate odometry");
+        frame.pipeline = 0;
+        f.vision.update();
+        f.vision.updateAimTarget(f.drive, false, false, 80_000_000L);
+        check(f.pp.writes == 2 && f.vision.getCorrectedRobotFieldPose().isPresent(),
+                "a new valid idle frame resumes calibration after camera faults");
+    }
+
+    private static void mixedAllianceTagsStayUsable() throws Exception {
+        for (Alliance alliance : Alliance.values()) {
+            Fixture f = new Fixture();
+            Camera camera = (Camera) U.allocateInstance(Camera.class);
+            Frame frame = (Frame) U.allocateInstance(Frame.class);
+            frame.pipeline = alliance == Alliance.BLUE ? 0 : 1;
+            frame.tag = (Tag) U.allocateInstance(Tag.class);
+            frame.tag.id = alliance == Alliance.BLUE ? 38 : 30;
+            frame.otherTag = (Tag) U.allocateInstance(Tag.class);
+            frame.otherTag.id = alliance == Alliance.BLUE ? 30 : 38;
+            frame.timestamp = 1;
+            camera.frame = frame;
+            set(f.vision, Vision.class, "alliance", alliance);
+            set(f.vision, Vision.class, "pipelineIndex", frame.pipeline);
+            set(f.vision, Vision.class, "limelight", camera);
+            f.vision.update();
+            f.vision.updateAimTarget(f.drive, false, false, 0);
+            check(f.drive.isFieldPoseInitialized() && f.pp.writes == 1,
+                    "mixed-alliance tags may initialize odometry for " + alliance);
+            check(f.vision.getUsableTagCount() == 2 && f.vision.getVisibleTagIds().size() == 2,
+                    "both alliances contribute usable HIVE detections");
+            frame.timestamp = 2;
+            f.vision.update();
+            f.vision.updateAimTarget(f.drive, false, true, 20_000_000L);
+            check(f.vision.hasValidAimingTarget() && f.pp.writes == 1,
+                    "mixed-alliance tags do not change RT odometry aiming or calibration pause");
+            check(f.vision.getSelectedCluster().get().isForAlliance(alliance),
+                    "mixed detections still aim at the driver's own CELL");
+            frame.tag.id = frame.otherTag.id;
+            frame.otherTag = null;
+            frame.timestamp = 3;
+            f.vision.update();
+            f.vision.updateAimTarget(f.drive, false, false, 40_000_000L);
+            check(f.pp.writes == 2 && f.vision.getUsableTagCount() == 1,
+                    "an opposing HIVE tag alone can provide valid localization");
+            check(f.vision.getSelectedCluster().get().isForAlliance(alliance),
+                    "opposing-only localization cannot select the opposing CELL");
+            frame.tag.id = 29;
+            frame.timestamp = 4;
+            f.vision.update();
+            f.vision.updateAimTarget(f.drive, false, false, 60_000_000L);
+            check(f.pp.writes == 2 && !f.vision.getCorrectedRobotFieldPose().isPresent(),
+                    "unknown tag IDs still cannot establish HIVE geometry");
+        }
     }
 
     public static void main(String[] args) throws Exception {
-        threeFramesThenCooldown();
-        failuresRetryWithoutCooldown();
-        motionAndFrameContinuity();
-        rtNeverCalibratesAndClearsPartialWindows();
-        cooldownRunsWhileRtIsHeld();
-        rtUsesNormalPidImmediately();
-        coldRtAndBStop();
-        pinpointFaultDiagnosticsAndRecovery();
+        continuousIdleCalibration();
+        rtUsesOnlyOdometry();
+        rtFaultAndStop();
+        odometryLockAndTagLossFeed();
+        frozenStaleAndWrongPipeline();
+        mixedAllianceTagsStayUsable();
         System.out.println("PASS RtCalibrationCheck: " + checks
-                + " idle three-frame calibration, success-only cooldown, retry, RT pause and odometry PID assertions");
+                + " idle calibration, paused RT, OD aim, freshness, lock and real-feed assertions");
     }
 }

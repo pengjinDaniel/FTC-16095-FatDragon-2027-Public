@@ -82,8 +82,8 @@ public class TestAutoCheck {
                         Math.asin(Math.sin(phi) * Math.cos(yaw)),
                         Math.atan2(Math.sin(phi) * Math.sin(yaw), Math.cos(phi)), 0));
         set(vision, Vision.class, "rawRobotFieldPose", raw);
-        set(vision, Vision.class, "botposeTagCount", 1);
-        set(vision, Vision.class, "usableTagCount", 1);
+        set(vision, Vision.class, "botposeTagCount", 2);
+        set(vision, Vision.class, "usableTagCount", 2);
     }
 
     private static void checkHive() throws Exception {

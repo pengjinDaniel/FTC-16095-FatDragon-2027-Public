@@ -99,7 +99,7 @@ public class ShooterTest extends OpMode {
         packet.put("stopLatched", stopLatched);
         dashboard.sendTelemetryPacket(packet);
 
-        telemetry.addLine("ShooterConstants: center/wall distance, velocity (ticks/s) and pitch. Same PID control as Blue/Red.");
+        telemetry.addLine("ShooterConstants: center/wall plus additionalShotPoints {cm, ticks/s, servo position}. Same PID as Blue/Red.");
         telemetry.addLine("Set ShooterTest.alliance before INIT. Drive stays stopped; aim manually.");
         telemetry.addLine("RT: distance-based shot. Release RT: shared standby power. B stops until RT is released.");
         telemetry.addData("Alliance", vision.getAlliance());
@@ -108,7 +108,7 @@ public class ShooterTest extends OpMode {
         telemetry.addData("Target status", vision.getTargetStatus());
         telemetry.addData("Calibration status", vision.getCalibrationStatus());
         telemetry.addData("Calibration cooldown (s)", vision.getCalibrationCooldownRemainingSeconds());
-        telemetry.addData("Center/wall calibration", Shooter.areDistanceShotValuesValid() ? "VALID" : "INCOMPLETE OR INVALID");
+        telemetry.addData("Distance-point calibration", Shooter.areDistanceShotValuesValid() ? "VALID" : "INCOMPLETE OR INVALID");
         telemetry.addData("Distance target accepted", distanceTargetAccepted);
         telemetry.addData("Control mode / target velocity", "%s / %.1f ticks/s",
                 shooter.getControlMode(), shooter.getTargetVelocity());
