@@ -21,6 +21,7 @@ import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 @TeleOp(name = "DashTuner", group = "Tests")
 @Config
 public class DashTuner extends OpMode {
+    private static final String VERSION = "DashTuner-20261104-1";
     public enum MotorMode {
         POWER,
         VELOCITY,
@@ -57,9 +58,11 @@ public class DashTuner extends OpMode {
     };
     private final float[] hsvValues = new float[3];
     private FtcDashboard dashboard;
+    private long loopCount;
 
     @Override
     public void init() {
+        loopCount = 0;
         dashboard = FtcDashboard.getInstance();
         bindHardware();
         publish(false);
@@ -73,6 +76,8 @@ public class DashTuner extends OpMode {
 
     @Override
     public void loop() {
+        loopCount++;
+        bindHardware();
         publish(true);
     }
 
@@ -113,8 +118,12 @@ public class DashTuner extends OpMode {
 
     private void publish(boolean running) {
         TelemetryPacket packet = new TelemetryPacket();
+        status(packet, "DashTuner version", VERSION);
+        status(packet, "DashTuner state", running ? "RUNNING: loop " + loopCount : "INIT: outputs disabled");
         for (int i = 0; i < motors.length; i++) {
             String name = hardwareName(motorName[i]);
+            status(packet, "Motor " + i + " config", "name=\"" + name + "\", mode="
+                    + motorMode[i] + ", target=" + motorTarget[i] + ", slaveTo=" + slaveTo[i]);
             if (!name.equals(boundMotorName[i])) {
                 stopMotor(i);
                 status(packet, "Motor " + i, "Name changed; stop and reinitialize");

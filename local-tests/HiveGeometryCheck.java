@@ -215,9 +215,12 @@ public class HiveGeometryCheck {
                     check(runtime.drive.updateVisionPose(pose(x, y, 90), 1, 0), "measured pose initializes");
                     runtime.frame(solve(x, y, 90, -side * 30.0), 2, false, 0);
                     close(DistanceUnit.INCH.toCm(runtime.vision.getTagCenterHorizontalDistanceInches()),
-                            distanceCm, .002, "production shot distance matches the four-tag measurement");
+                            distanceCm, .002, "four-tag diagnostic distance remains available");
                     close(runtime.vision.getTargetXInches(), side * 17.7, .002,
                             "aiming restores the fixed historical CELL opening");
+                    close(DistanceUnit.INCH.toCm(runtime.vision.getTargetHorizontalDistanceInches()),
+                            Math.hypot((17.7 - 13.1064522228) * 2.54, distanceCm), .002,
+                            "shooting and aiming share the CELL-opening distance");
                 }
             }
         }

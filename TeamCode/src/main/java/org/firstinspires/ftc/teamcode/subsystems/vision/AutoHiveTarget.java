@@ -65,12 +65,12 @@ public class AutoHiveTarget {
                 }
             }
         }
-        // Cached geometry can support distance shots; only a current observation can report HIGH.
-        double[] tagCenter = VisionMath.tagClusterCenterForHiveTilt(cluster, lastKnownAngleDegrees);
-        if (tagCenter != null) {
+        // Use the same CELL opening as aiming; only a current observation can report HIGH.
+        double[] target = fieldTarget();
+        if (target != null) {
             distanceCm = DistanceUnit.INCH.toCm(Math.hypot(
-                    tagCenter[0] - fieldPose.getX(DistanceUnit.INCH),
-                    tagCenter[1] - fieldPose.getY(DistanceUnit.INCH)));
+                    target[0] - fieldPose.getX(DistanceUnit.INCH),
+                    target[1] - fieldPose.getY(DistanceUnit.INCH)));
         }
     }
 

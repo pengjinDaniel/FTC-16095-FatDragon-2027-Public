@@ -98,14 +98,16 @@ public class TestAutoCheck {
             HiveState expected = Math.abs(theta) <= 23 ? HiveState.MIDDLE
                     : theta > 0 ? HiveState.HIGH : HiveState.LOW;
             check(target.getState() == expected, "state at " + theta + " degrees");
-            check(Double.isFinite(target.getDistanceCm()), "valid shot distance");
+            close(target.getDistanceCm(), DistanceUnit.INCH.toCm(Math.hypot(
+                    -17.7 - (robot.x() - 72.0), -12.75 - (robot.y() - 72.0))),
+                    "CELL-opening distance stays aligned with aiming at HIVE angle " + theta);
         }
         frame(vision, robot, 30);
         target.update(robot);
         double distance = target.getDistanceCm();
         close(distance, DistanceUnit.INCH.toCm(Math.hypot(
-                -13.1064522228 - (robot.x() - 72.0), -12.75 - (robot.y() - 72.0))),
-                "autonomous uses the same four-tag-center shot distance");
+                -17.7 - (robot.x() - 72.0), -12.75 - (robot.y() - 72.0))),
+                "autonomous uses the same CELL-opening center as aiming");
         Method clear = Vision.class.getDeclaredMethod("clearCurrentFrame");
         clear.setAccessible(true);
         clear.invoke(vision);

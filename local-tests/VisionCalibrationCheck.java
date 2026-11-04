@@ -9,7 +9,7 @@ import org.firstinspires.ftc.teamcode.subsystems.drive.Drive;
 import org.firstinspires.ftc.teamcode.subsystems.drive.DriveConstants;
 import sun.misc.Unsafe;
 
-/** Exercises direct pose writes, metadata rejection and odometry/headless continuation. */
+/** Exercises continuous calibration, direct pose writes, metadata and odometry/headless continuation. */
 public class VisionCalibrationCheck {
     private static int checks;
     private static final Unsafe ALLOCATOR = allocator();
@@ -48,13 +48,35 @@ public class VisionCalibrationCheck {
         Pose2D position;
         DeviceStatus status;
         int writes;
+        int offsetReads;
+        double xOffsetMm, yOffsetMm;
+        boolean failOffsetRead;
+        boolean failAfterPoseWrite;
+        com.qualcomm.robotcore.hardware.I2cDeviceSynchReadHistoryImpl readHistory;
+        com.qualcomm.robotcore.hardware.TimestampedI2cData rawReply;
         double velX, velY, headingVelocity;
         FakePinpoint() { super(null, false); }
         @Override public DeviceStatus getDeviceStatus() { return status; }
         @Override public Pose2D getPosition() { return position; }
         @Override public double getHeading(AngleUnit unit) { return position.getHeading(unit); }
         @Override public void setPosition(Pose2D value) { position = value; writes++; }
-        @Override public void update() { }
+        @Override public void update() {
+            if (failAfterPoseWrite && writes > 0) status = DeviceStatus.FAULT_BAD_READ;
+            if (readHistory != null && rawReply != null) readHistory.addToHistoryQueue(rawReply);
+        }
+        @Override public double getHeading(
+                org.firstinspires.ftc.robotcore.external.navigation.UnnormalizedAngleUnit unit) {
+            return unit.fromDegrees(position.getHeading(AngleUnit.DEGREES));
+        }
+        @Override public float getXOffset(DistanceUnit unit) {
+            offsetReads++;
+            if (failOffsetRead) status = DeviceStatus.FAULT_BAD_READ;
+            return (float) unit.fromMm(xOffsetMm);
+        }
+        @Override public float getYOffset(DistanceUnit unit) {
+            offsetReads++;
+            return (float) unit.fromMm(yOffsetMm);
+        }
         @Override public double getVelX(DistanceUnit unit) { return unit.fromMm(DistanceUnit.INCH.toMm(velX)); }
         @Override public double getVelY(DistanceUnit unit) { return unit.fromMm(DistanceUnit.INCH.toMm(velY)); }
         @Override public double getHeadingVelocity(
@@ -71,6 +93,8 @@ public class VisionCalibrationCheck {
         Samples() throws Exception {
             pinpoint.position = pose(0, 0, 0);
             pinpoint.status = com.qualcomm.hardware.gobilda.GoBildaPinpointDriver.DeviceStatus.READY;
+            pinpoint.xOffsetMm = DriveConstants.pinpointXOffsetMm;
+            pinpoint.yOffsetMm = DriveConstants.pinpointYOffsetMm;
             set(drive, Drive.class, "pinpoint", pinpoint);
             set(drive, Drive.class, "driverHeadingReferenceRadians", Double.NaN);
             set(drive, Drive.class, "lastVisionTimestamp", Double.NaN);
@@ -182,7 +206,7 @@ public class VisionCalibrationCheck {
         check(!empty.drive.isFieldPoseInitialized(), "READY odometry alone cannot establish field coordinates");
         check(Double.isNaN(empty.drive.getPose().getX(DistanceUnit.CM)),
                 "uninitialized odometry is never reported as field origin");
-        close(empty.vision.getCalibrationCooldownRemainingSeconds(), 0, "historical calibration has no cooldown");
+        close(empty.vision.getCalibrationCooldownRemainingSeconds(), 0, "no cooldown precedes the first success");
 
         for (boolean stopped : new boolean[]{false, true}) {
             Samples sample = new Samples();
@@ -192,7 +216,7 @@ public class VisionCalibrationCheck {
             }
             boolean permitted = !stopped;
             check(sample.drive.isFieldPoseInitialized() == permitted, "B stop pauses the stable calibration path");
-            check(sample.pinpoint.writes == (permitted ? 3 : 0), "each permitted fresh frame calibrates without success cooldown");
+            check(sample.pinpoint.writes == (permitted ? 3 : 0), "every permitted fresh frame calibrates without a success delay");
             check(sample.vision.hasValidAimingTarget() == permitted, "aiming waits for field initialization");
         }
 
@@ -230,6 +254,7 @@ public class VisionCalibrationCheck {
         check(!direct.drive.isFieldPoseInitialized(), "Pinpoint fault invalidates the field registration");
         check(!direct.drive.updateVisionPose(pose(0, 0, 0), 3, 4), "an unavailable Pinpoint rejects external writes");
         direct.pinpoint.status = com.qualcomm.hardware.gobilda.GoBildaPinpointDriver.DeviceStatus.READY;
+        direct.drive.periodic();
         check(direct.drive.updateVisionPose(pose(0, 0, 180), 3, 5), "a ready Pinpoint can establish a new field frame");
         checkHeadlessAndTagLossShooting();
         System.out.println("PASS VisionCalibrationCheck: " + checks

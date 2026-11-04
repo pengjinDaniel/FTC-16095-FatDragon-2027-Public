@@ -1,11 +1,15 @@
 package org.firstinspires.ftc.teamcode.pedro.procedures;
 
+import com.acmerobotics.dashboard.FtcDashboard;
+import com.acmerobotics.dashboard.telemetry.TelemetryPacket;
 import com.pedropathing.algorithm.Algorithm;
 import com.pedropathing.drivetrain.DrivePowers;
 import com.pedropathing.drivetrain.Drivetrain;
 import com.pedropathing.follower.Follower;
 import com.pedropathing.localization.Localizer;
 import com.pedropathing.math.Pose;
+import com.pedropathing.revhub.drivetrains.Mecanum;
+import com.pedropathing.revhub.localizers.PinpointLocalizer;
 import com.pedropathing.paths.Path;
 import com.pedropathing.paths.interpolator.Interpolator;
 import com.pedropathing.tuning.autotune.DisplayName;
@@ -13,14 +17,22 @@ import com.pedropathing.tuning.autotune.Inputs;
 import com.pedropathing.tuning.autotune.Procedure;
 import com.pedropathing.tuning.autotune.TuningOpMode;
 import com.pedropathing.utils.Angle;
+import com.qualcomm.hardware.gobilda.GoBildaPinpointDriver;
+import com.qualcomm.robotcore.eventloop.opmode.OpModeManager;
+import com.qualcomm.robotcore.eventloop.opmode.OpModeRegistrar;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 import com.qualcomm.robotcore.util.ElapsedTime;
+
+import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
+import org.firstinspires.ftc.robotcore.internal.opmode.OpModeMeta;
+import org.firstinspires.ftc.teamcode.pedro.Constants;
 
 import java.util.function.Function;
 import java.util.function.Supplier;
 
 import static com.pedropathing.api.Paths.curve;
 import static com.pedropathing.api.Paths.line;
+import static com.pedropathing.api.Paths.path;
 
 public class Tests extends Procedure {
     enum Test {
@@ -39,12 +51,77 @@ public class Tests extends Procedure {
         @DisplayName("Driving Test")
         DRIVING,
         @DisplayName("Pose Test")
-        POSE
+        POSE,
+        @DisplayName("Triangle Test")
+        TRIANGLE,
+        @DisplayName("Circle Test")
+        CIRCLE
     }
     Function<HardwareMap, Drivetrain> drivetrainFunction;
     Function<HardwareMap, Localizer> localizerFunction;
     Supplier<Algorithm> algorithmSupplier;
     Function<HardwareMap, Follower> followerFunction;
+
+    @OpModeRegistrar
+    public static void registerOpModes(OpModeManager manager) {
+        Function<HardwareMap, Drivetrain> drivetrain = hardwareMap -> new Mecanum(hardwareMap, Constants.drivetrainConfig);
+        Function<HardwareMap, Localizer> localizer = hardwareMap -> new PinpointLocalizer(hardwareMap, Constants.localizerConfig);
+        Function<HardwareMap, Follower> follower = Constants::create;
+        register(manager, "Pedro Localization Test", new TestsLocalization(drivetrain, localizer));
+        register(manager, "Pedro Pose Test", new TestsPose(localizer));
+        register(manager, "Pedro Driving Test", new TestsDriving(drivetrain));
+        register(manager, "Pedro Odometry Test", new TestsOdometry(drivetrain, localizer));
+        register(manager, "Pedro Hold Test", new TestsHold(follower));
+        register(manager, "Pedro Line Test", new TestsLine(follower, 48));
+        register(manager, "Pedro Curve Test", new TestsCurve(follower, 48));
+        register(manager, "Pedro Interpolation Test", new TestsInterpolation(follower, 48));
+        register(manager, "Pedro Triangle Test", new TestsShape(follower, false, 24));
+        register(manager, "Pedro Circle Test", new TestsShape(follower, true, 10));
+    }
+
+    private static void register(OpModeManager manager, String name, TuningOpMode<?> opMode) {
+        manager.register(new OpModeMeta.Builder().setName(name).setGroup("Pedro Pathing")
+                .setFlavor(OpModeMeta.Flavor.TELEOP).build(), opMode);
+    }
+
+    static Follower createFollower(TuningOpMode<?> opMode, Function<HardwareMap, Follower> factory) {
+        try {
+            return factory.apply(opMode.hardwareMap);
+        } catch (IllegalStateException exception) {
+            do {
+                opMode.telemetry.addLine("Pedro path configuration is not ready.");
+                opMode.telemetry.addData("Configuration", exception.getMessage());
+                opMode.telemetry.addLine("Run AutoTune > Foresight Tuner, copy its Java export into pedro/Constants.java, then rebuild.");
+                opMode.telemetry.update();
+                opMode.idle();
+            } while (opMode.opModeInInit());
+            return null;
+        }
+    }
+
+    static void showPose(TuningOpMode<?> opMode, Localizer localizer) {
+        Pose pose = localizer.pose();
+        opMode.telemetry.addData("X (in / cm)", "%.2f / %.2f", pose.x(), DistanceUnit.INCH.toCm(pose.x()));
+        opMode.telemetry.addData("Y (in / cm)", "%.2f / %.2f", pose.y(), DistanceUnit.INCH.toCm(pose.y()));
+        opMode.telemetry.addData("Heading (deg)", Math.toDegrees(pose.heading()));
+        if (localizer instanceof PinpointLocalizer) {
+            opMode.telemetry.addData("Pinpoint", opMode.hardwareMap.get(
+                    GoBildaPinpointDriver.class, Constants.localizerConfig.name.get()).getDeviceStatus());
+        }
+        opMode.telemetry.update();
+        FtcDashboard dashboard = FtcDashboard.getInstance();
+        if (dashboard != null && Double.isFinite(pose.x()) && Double.isFinite(pose.y())
+                && Double.isFinite(pose.heading())) {
+            TelemetryPacket packet = new TelemetryPacket();
+            packet.put("xInches", pose.x());
+            packet.put("yInches", pose.y());
+            packet.put("headingDegrees", Math.toDegrees(pose.heading()));
+            packet.fieldOverlay().setStroke("#3f51b5").strokeCircle(pose.x(), pose.y(), 9)
+                    .strokeLine(pose.x(), pose.y(), pose.x() + 9 * Math.cos(pose.heading()),
+                            pose.y() + 9 * Math.sin(pose.heading()));
+            dashboard.sendTelemetryPacket(packet);
+        }
+    }
 
     public Tests(Function<HardwareMap, Drivetrain> drivetrainFunction, Function<HardwareMap, Localizer> localizerFunction, Supplier<Algorithm> algorithmSupplier) {
         super("Tests", "A procedure for testing the Follower.");
@@ -71,10 +148,22 @@ public class Tests extends Procedure {
             followerFunction = (hardwareMap) -> new Follower(localizerFunction.apply(hardwareMap), drivetrainFunction.apply(hardwareMap), algorithmSupplier.get());
 
         Inputs inputs = inputs("Select", "Select");
-        Inputs.Field<Test> selectedTest = inputs.e("Test", Test.class).withDefault(Test.LINE);
-        Inputs.Field<Double> distance = inputs.d("Distance").withDefault(48.0);
-
+        Inputs.Field<Test> selectedTest = inputs.e("Test", Test.class)
+                .withDefault(algorithm ? Test.LINE : Test.LOCALIZATION);
         awaitInputs(inputs);
+        double distance = 48;
+        if (selectedTest.get() == Test.LINE || selectedTest.get() == Test.CURVED
+                || selectedTest.get() == Test.INTERPOLATION_CURVED
+                || selectedTest.get() == Test.TRIANGLE || selectedTest.get() == Test.CIRCLE) {
+            Inputs dimensions = inputs("Dimensions", "Enter the path dimensions in inches.");
+            boolean circle = selectedTest.get() == Test.CIRCLE;
+            double defaultDistance = circle ? 10 : selectedTest.get() == Test.TRIANGLE ? 24 : 48;
+            Inputs.Field<Double> size = dimensions.d(circle ? "Radius" : "Distance").withDefault(defaultDistance);
+            awaitInputs(dimensions);
+            distance = size.get();
+            if (!Double.isFinite(distance) || distance <= 0)
+                throw new IllegalArgumentException("Path distance must be finite and positive.");
+        }
 
         switch (selectedTest.get()) {
             case HOLD:
@@ -85,17 +174,17 @@ public class Tests extends Procedure {
             case LINE:
                 if (!algorithm)
                     throw new IllegalArgumentException("Algorithm is required for Hold Test.");
-                completed = runOpMode(new TestsLine(followerFunction, distance.get()));
+                completed = runOpMode(new TestsLine(followerFunction, distance));
                 break;
             case CURVED:
                 if (!algorithm)
                     throw new IllegalArgumentException("Algorithm is required for Hold Test.");
-                completed = runOpMode(new TestsCurve(followerFunction, distance.get()));
+                completed = runOpMode(new TestsCurve(followerFunction, distance));
                 break;
             case INTERPOLATION_CURVED:
                 if (!algorithm)
                     throw new IllegalArgumentException("Algorithm is required for Hold Test.");
-                completed = runOpMode(new TestsInterpolation(followerFunction, distance.get()));
+                completed = runOpMode(new TestsInterpolation(followerFunction, distance));
                 break;
             case LOCALIZATION:
                 if (!drivetrain)
@@ -123,6 +212,13 @@ public class Tests extends Procedure {
                     throw new IllegalArgumentException("Drivetrain is required for Driving Test.");
                 completed = runOpMode(new TestsDriving(drivetrainFunction));
                 break;
+            case TRIANGLE:
+            case CIRCLE:
+                if (!algorithm)
+                    throw new IllegalArgumentException("Run Foresight Tuner before path tests.");
+                completed = runOpMode(new TestsShape(followerFunction,
+                        selectedTest.get() == Test.CIRCLE, distance));
+                break;
         }
 
         result("Completed", completed);
@@ -139,17 +235,25 @@ class TestsHold extends TuningOpMode<Boolean> {
 
     @Override
     public Boolean runTuningOpMode() throws InterruptedException {
-        Follower follower = followerFunction.apply(hardwareMap);
-        follower.setPose(Pose.zero());
-        Thread.sleep(1000);
-        waitForStart();
-        follower.setPose(Pose.zero());
-        follower.update();
-        follower.hold(Pose.zero());
-        while (opModeIsActive()) {
+        Follower follower = Tests.createFollower(this, followerFunction);
+        if (follower == null) return false;
+        try {
+            follower.setPose(Pose.zero());
+            Thread.sleep(1000);
+            waitForStart();
+            if (isStopRequested()) return false;
+            follower.setPose(Pose.zero());
             follower.update();
+            follower.hold(Pose.zero());
+            while (opModeIsActive()) {
+                follower.update();
+                Tests.showPose(this, follower.localizer);
+            }
+            return true;
+        } finally {
+            follower.stop();
+            follower.drivetrain.stop();
         }
-        return true;
     }
 }
 
@@ -165,32 +269,32 @@ class TestsLine extends TuningOpMode<Boolean> {
 
     @Override
     public Boolean runTuningOpMode() throws InterruptedException {
-        Follower follower = followerFunction.apply(hardwareMap);
-        follower.setPose(Pose.zero());
-
-        boolean forward = true;
-
-        Path path1 = line(Pose.zero(), new Pose(distance,0, 0)).constant(0);
-        Path path2 = line(new Pose(distance,0, 0), Pose.zero()).constant(0);
-
-        Thread.sleep(1000);
-        waitForStart();
-        follower.setPose(Pose.zero());
-        follower.update();
-        follower.follow(path1);
-
-        while (opModeIsActive()) {
+        Follower follower = Tests.createFollower(this, followerFunction);
+        if (follower == null) return false;
+        try {
+            follower.setPose(Pose.zero());
+            boolean forward = true;
+            Path path1 = line(Pose.zero(), new Pose(distance,0, 0)).constant(0);
+            Path path2 = line(new Pose(distance,0, 0), Pose.zero()).constant(0);
+            Thread.sleep(1000);
+            waitForStart();
+            if (isStopRequested()) return false;
+            follower.setPose(Pose.zero());
             follower.update();
-            if (follower.atParametricEnd()) {
-                if (forward) {
-                    follower.follow(path2);
-                } else {
-                    follower.follow(path1);
+            follower.follow(path1);
+            while (opModeIsActive()) {
+                follower.update();
+                if (follower.atParametricEnd()) {
+                    follower.follow(forward ? path2 : path1);
+                    forward = !forward;
                 }
-                forward = !forward;
+                Tests.showPose(this, follower.localizer);
             }
+            return true;
+        } finally {
+            follower.stop();
+            follower.drivetrain.stop();
         }
-        return true;
     }
 }
 
@@ -206,32 +310,32 @@ class TestsCurve extends TuningOpMode<Boolean> {
 
     @Override
     public Boolean runTuningOpMode() throws InterruptedException {
-        Follower follower = followerFunction.apply(hardwareMap);
-        follower.setPose(Pose.zero());
-
-        boolean forward = true;
-
-        Path path1 = curve(Pose.zero(), new Pose(distance + 0,0), new Pose(distance,distance)).tangent();
-        Path path2 = curve(new Pose(distance,distance), new Pose(distance,0), Pose.zero()).tangent();
-
-        Thread.sleep(1000);
-        waitForStart();
-        follower.setPose(Pose.zero());
-        follower.update();
-        follower.follow(path1);
-
-        while (opModeIsActive()) {
+        Follower follower = Tests.createFollower(this, followerFunction);
+        if (follower == null) return false;
+        try {
+            follower.setPose(Pose.zero());
+            boolean forward = true;
+            Path path1 = curve(Pose.zero(), new Pose(distance,0), new Pose(distance,distance)).tangent();
+            Path path2 = curve(new Pose(distance,distance), new Pose(distance,0), Pose.zero()).tangent();
+            Thread.sleep(1000);
+            waitForStart();
+            if (isStopRequested()) return false;
+            follower.setPose(Pose.zero());
             follower.update();
-            if (follower.atParametricEnd()) {
-                if (forward) {
-                    follower.follow(path2);
-                } else {
-                    follower.follow(path1);
+            follower.follow(path1);
+            while (opModeIsActive()) {
+                follower.update();
+                if (follower.atParametricEnd()) {
+                    follower.follow(forward ? path2 : path1);
+                    forward = !forward;
                 }
-                forward = !forward;
+                Tests.showPose(this, follower.localizer);
             }
+            return true;
+        } finally {
+            follower.stop();
+            follower.drivetrain.stop();
         }
-        return true;
     }
 }
 
@@ -247,32 +351,88 @@ class TestsInterpolation extends TuningOpMode<Boolean> {
 
     @Override
     public Boolean runTuningOpMode() throws InterruptedException {
-        Follower follower = followerFunction.apply(hardwareMap);
-        follower.setPose(Pose.zero());
-
-        boolean forward = true;
-
-        Path path1 = curve(Pose.zero(), new Pose(distance + 0,0), new Pose(distance,distance)).heading((curve, t) -> Math.PI);
-        Path path2 = curve(new Pose(distance,distance), new Pose(distance,0), Pose.zero()).heading(Interpolator.piecewise().until(0.5, Interpolator.tangent).until(1.0, Interpolator.constant(0)));
-
-        Thread.sleep(1000);
-        waitForStart();
-        follower.setPose(Pose.zero());
-        follower.update();
-        follower.follow(path1);
-
-        while (opModeIsActive()) {
+        Follower follower = Tests.createFollower(this, followerFunction);
+        if (follower == null) return false;
+        try {
+            follower.setPose(Pose.zero());
+            boolean forward = true;
+            Path path1 = curve(Pose.zero(), new Pose(distance,0), new Pose(distance,distance)).heading((curve, t) -> Math.PI);
+            Path path2 = curve(new Pose(distance,distance), new Pose(distance,0), Pose.zero()).heading(Interpolator.piecewise().until(0.5, Interpolator.tangent).until(1.0, Interpolator.constant(0)));
+            Thread.sleep(1000);
+            waitForStart();
+            if (isStopRequested()) return false;
+            follower.setPose(Pose.zero());
             follower.update();
-            if (follower.atParametricEnd()) {
-                if (forward) {
-                    follower.follow(path2);
-                } else {
-                    follower.follow(path1);
+            follower.follow(path1);
+            while (opModeIsActive()) {
+                follower.update();
+                if (follower.atParametricEnd()) {
+                    follower.follow(forward ? path2 : path1);
+                    forward = !forward;
                 }
-                forward = !forward;
+                Tests.showPose(this, follower.localizer);
             }
+            return true;
+        } finally {
+            follower.stop();
+            follower.drivetrain.stop();
         }
-        return true;
+    }
+}
+
+class TestsShape extends TuningOpMode<Boolean> {
+    private final Function<HardwareMap, Follower> followerFunction;
+    private final boolean circle;
+    private final double distance;
+
+    public TestsShape(Function<HardwareMap, Follower> followerFunction, boolean circle, double distance) {
+        super(circle ? "Circle Test" : "Triangle Test", "Repeats a closed path from the local origin.", true);
+        this.followerFunction = followerFunction;
+        this.circle = circle;
+        this.distance = distance;
+    }
+
+    // China Championship examples translated from their (72,72) start to a local (0,0) start.
+    static Path triangle(double distance) {
+        if (!Double.isFinite(distance) || distance <= 0) throw new IllegalArgumentException("Triangle size must be positive.");
+        Pose start = Pose.zero();
+        Pose middle = new Pose(distance, -distance, Math.PI / 2);
+        Pose end = new Pose(distance, distance, Math.PI / 4);
+        return path(line(start, middle).linear(start, middle),
+                line(middle, end).linear(middle, end), line(end, start).linear(end, start));
+    }
+
+    static Path circle(double radius) {
+        if (!Double.isFinite(radius) || radius <= 0) throw new IllegalArgumentException("Circle radius must be positive.");
+        Pose center = new Pose(0, radius);
+        return path(curve(Pose.zero(), new Pose(radius, 0), new Pose(radius, radius)),
+                curve(new Pose(radius, radius), new Pose(radius, 2 * radius), new Pose(0, 2 * radius)),
+                curve(new Pose(0, 2 * radius), new Pose(-radius, 2 * radius), new Pose(-radius, radius)),
+                curve(new Pose(-radius, radius), new Pose(-radius, 0), Pose.zero())).facingPoint(center);
+    }
+
+    @Override
+    public Boolean runTuningOpMode() throws InterruptedException {
+        Path route = circle ? circle(distance) : triangle(distance);
+        Follower follower = Tests.createFollower(this, followerFunction);
+        if (follower == null) return false;
+        try {
+            follower.setPose(Pose.zero());
+            Thread.sleep(1000);
+            waitForStart();
+            if (isStopRequested()) return false;
+            follower.setPose(Pose.zero());
+            follower.follow(route);
+            while (opModeIsActive()) {
+                follower.update();
+                Tests.showPose(this, follower.localizer);
+                if (follower.atParametricEnd()) follower.follow(route);
+            }
+            return true;
+        } finally {
+            follower.stop();
+            follower.drivetrain.stop();
+        }
     }
 }
 
@@ -290,20 +450,22 @@ class TestsLocalization extends TuningOpMode<Boolean> {
     public Boolean runTuningOpMode() throws InterruptedException {
         Localizer localizer = localizerFunction.apply(hardwareMap);
         Drivetrain drivetrain = drivetrainFunction.apply(hardwareMap);
-
-        localizer.setPose(Pose.zero());
-
-        Thread.sleep(1000);
-        waitForStart();
-        localizer.setPose(Pose.zero());
-
-        while (opModeIsActive()) {
-            drivetrain.drive(new DrivePowers(-gamepad1.left_stick_y, -gamepad1.left_stick_x, -gamepad1.right_stick_x), true);
-            localizer.update();
-            telemetry.addData("Pose", localizer.pose());
-            telemetry.update();
+        try {
+            drivetrain.stop();
+            localizer.setPose(Pose.zero());
+            Thread.sleep(1000);
+            waitForStart();
+            if (isStopRequested()) return false;
+            localizer.setPose(Pose.zero());
+            while (opModeIsActive()) {
+                drivetrain.drive(new DrivePowers(-gamepad1.left_stick_y, -gamepad1.left_stick_x, -gamepad1.right_stick_x), true);
+                localizer.update();
+                Tests.showPose(this, localizer);
+            }
+            return true;
+        } finally {
+            drivetrain.stop();
         }
-        return true;
     }
 }
 
@@ -331,7 +493,7 @@ class TestsOdometry extends TuningOpMode<Boolean> {
     private boolean passedHeading = false;
 
     public TestsOdometry(Function<HardwareMap, Drivetrain> drivetrainFunction, Function<HardwareMap, Localizer> localizerFunction) {
-        super("Localization Test", "Verifies localization and manual control.", true);
+        super("Odometry Test", "Automatically drives forward, left, then turns to check localization.", true);
         this.drivetrainFunction = drivetrainFunction;
         this.localizerFunction = localizerFunction;
     }
@@ -340,99 +502,107 @@ class TestsOdometry extends TuningOpMode<Boolean> {
     public Boolean runTuningOpMode() throws InterruptedException {
         Localizer localizer = localizerFunction.apply(hardwareMap);
         Drivetrain drivetrain = drivetrainFunction.apply(hardwareMap);
+        try {
+            drivetrain.stop();
+            test = Test.FORWARD;
+            passedX = passedY = passedHeading = false;
+            totalHeading = prevHeading = 0;
+            localizer.setPose(Pose.zero());
 
-        localizer.setPose(Pose.zero());
+            Thread.sleep(1000);
+            waitForStart();
+            if (isStopRequested()) return false;
+            localizer.setPose(Pose.zero());
 
-        Thread.sleep(1000);
-        waitForStart();
-        localizer.setPose(Pose.zero());
+            timer.reset();
 
-        timer.reset();
+            while (opModeIsActive()) {
+                localizer.update();
 
-        while (opModeIsActive()) {
-            localizer.update();
+                if (localizer.pose().x() != Pose.zero().x() || localizer.pose().y() != Pose.zero().y() || localizer.pose().heading() != Pose.zero().heading()) {
+                    double currentHeading = localizer.pose().heading();
+                    totalHeading += Angle.normalizeSigned(currentHeading - prevHeading);
+                    prevHeading = currentHeading;
+                }
 
-            if (localizer.pose().x() != Pose.zero().x() || localizer.pose().y() != Pose.zero().y() || localizer.pose().heading() != Pose.zero().heading()) {
-                double currentHeading = localizer.pose().heading();
-                totalHeading += Angle.normalizeSigned(currentHeading - prevHeading);
-                prevHeading = currentHeading;
+                switch (test) {
+                    case FORWARD:
+                        drivetrain.drive(new DrivePowers(POWER, 0, 0), false);
+
+                        if (timer.seconds() > 1) {
+                            test = Test.LEFT;
+                            timer.reset();
+                        }
+                        break;
+                    case LEFT:
+                        drivetrain.drive(new DrivePowers(0, POWER, 0), false);
+
+                        if (timer.seconds() > 1) {
+                            test = Test.TURN;
+                            timer.reset();
+
+                            prevHeading = localizer.pose().heading();
+                            totalHeading = 0;
+                        }
+                        break;
+                    case TURN:
+                        drivetrain.drive(new DrivePowers(0, 0, POWER), false);
+
+                        if (timer.seconds() > 1) {
+                            test = Test.IDLE;
+                            timer.reset();
+                        }
+                        break;
+                    case IDLE:
+                        drivetrain.drive(new DrivePowers(0, 0, 0), true);
+
+                        telemetry.addData("Test", "Completed");
+
+                        Pose pose = localizer.pose();
+
+                        if (pose.x() < 0)
+                            telemetry.addData("xPod Direction", "Flipped");
+                        else if (pose.x() < 2)
+                            telemetry.addData("xPod Resolution", "Too high");
+                        else if (pose.x() > 144)
+                            telemetry.addData("xPod Resolution", "Too low");
+                        else {
+                            telemetry.addData("xPod", "Good");
+                            passedX = true;
+                        }
+
+                        if (pose.y() < 0)
+                            telemetry.addData("yPod Direction", "Flipped");
+                        else if (pose.y() < 2)
+                            telemetry.addData("yPod Resolution", "Too high");
+                        else if (pose.y() > 144)
+                            telemetry.addData("yPod Resolution", "Too low");
+                        else {
+                            telemetry.addData("yPod", "Good");
+                            passedY = true;
+                        }
+
+                        if (totalHeading < 0)
+                            telemetry.addData("Heading Direction", "Flipped");
+                        else if (totalHeading < 0.02)
+                            telemetry.addData("Heading Resolution", "Too high");
+                        else if (totalHeading > 2 * Math.PI)
+                            telemetry.addData("Heading Resolution", "Too low");
+                        else {
+                            telemetry.addData("Heading", "Good");
+                            passedHeading = true;
+                        }
+
+                        break;
+                }
+
+                telemetry.addData("Stage", test);
+                Tests.showPose(this, localizer);
             }
-
-            switch (test) {
-                case FORWARD:
-                    drivetrain.drive(new DrivePowers(POWER, 0, 0), false);
-
-                    if (timer.seconds() > 1) {
-                        test = Test.LEFT;
-                        timer.reset();
-                    }
-                    break;
-                case LEFT:
-                    drivetrain.drive(new DrivePowers(0, POWER, 0), false);
-
-                    if (timer.seconds() > 1) {
-                        test = Test.TURN;
-                        timer.reset();
-
-                        prevHeading = localizer.pose().heading();
-                        totalHeading = 0;
-                    }
-                    break;
-                case TURN:
-                    drivetrain.drive(new DrivePowers(0, 0, POWER), false);
-
-                    if (timer.seconds() > 1) {
-                        test = Test.IDLE;
-                        timer.reset();
-                    }
-                    break;
-                case IDLE:
-                    drivetrain.drive(new DrivePowers(0, 0, 0), true);
-
-                    telemetry.addData("Test", "Completed");
-
-                    Pose pose = localizer.pose();
-
-                    if (pose.x() < 0)
-                        telemetry.addData("xPod Direction", "Flipped");
-                    else if (pose.x() < 2)
-                        telemetry.addData("xPod Resolution", "Too high");
-                    else if (pose.x() > 144)
-                        telemetry.addData("xPod Resolution", "Too low");
-                    else {
-                        telemetry.addData("xPod", "Good");
-                        passedX = true;
-                    }
-
-                    if (pose.y() < 0)
-                        telemetry.addData("yPod Direction", "Flipped");
-                    else if (pose.y() < 2)
-                        telemetry.addData("yPod Resolution", "Too high");
-                    else if (pose.y() > 144)
-                        telemetry.addData("yPod Resolution", "Too low");
-                    else {
-                        telemetry.addData("yPod", "Good");
-                        passedY = true;
-                    }
-
-                    if (totalHeading < 0)
-                        telemetry.addData("Heading Direction", "Flipped");
-                    else if (totalHeading < 0.02)
-                        telemetry.addData("Heading Resolution", "Too high");
-                    else if (totalHeading > 2 * Math.PI)
-                        telemetry.addData("Heading Resolution", "Too low");
-                    else {
-                        telemetry.addData("Heading", "Good");
-                        passedHeading = true;
-                    }
-
-                    break;
-            }
-
-            telemetry.addData("Pose", localizer.pose());
-            telemetry.update();
+            return passedX && passedY && passedHeading;
+        } finally {
+            drivetrain.stop();
         }
-        return passedX && passedY && passedHeading;
     }
 }
 
@@ -447,11 +617,16 @@ class TestsDriving extends TuningOpMode<Boolean> {
     @Override
     public Boolean runTuningOpMode() throws InterruptedException {
         Drivetrain drivetrain = drivetrainFunction.apply(hardwareMap);
-        waitForStart();
-        while (opModeIsActive()) {
-            drivetrain.drive(new DrivePowers(-gamepad1.left_stick_y, -gamepad1.left_stick_x, -gamepad1.right_stick_x), true);
+        try {
+            drivetrain.stop();
+            waitForStart();
+            while (opModeIsActive()) {
+                drivetrain.drive(new DrivePowers(-gamepad1.left_stick_y, -gamepad1.left_stick_x, -gamepad1.right_stick_x), true);
+            }
+            return true;
+        } finally {
+            drivetrain.stop();
         }
-        return true;
     }
 }
 
@@ -470,10 +645,21 @@ class TestsPose extends TuningOpMode<Boolean> {
         waitForStart();
         localizer.setPose(Pose.zero());
         localizer.update();
+        if (localizer instanceof PinpointLocalizer) {
+            GoBildaPinpointDriver pinpoint = hardwareMap.get(
+                    GoBildaPinpointDriver.class, Constants.localizerConfig.name.get());
+            // Offset getters perform separate I2C reads; retain this startup snapshot.
+            telemetry.addData("Configured X/Y pod offsets (mm)", "%.2f / %.2f",
+                    Constants.localizerConfig.xPodOffset.get(), Constants.localizerConfig.yPodOffset.get())
+                    .setRetained(true);
+            telemetry.addData("Device X/Y pod offsets (mm)", "%.2f / %.2f",
+                    pinpoint.getXOffset(DistanceUnit.MM), pinpoint.getYOffset(DistanceUnit.MM))
+                    .setRetained(true);
+            telemetry.addData("Offset read status", pinpoint.getDeviceStatus()).setRetained(true);
+        }
         while (opModeIsActive()) {
             localizer.update();
-            telemetry.addData("Pose", localizer.pose());
-            telemetry.update();
+            Tests.showPose(this, localizer);
         }
         return true;
     }

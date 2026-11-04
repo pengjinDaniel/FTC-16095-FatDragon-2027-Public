@@ -73,7 +73,7 @@ public class ShooterTest extends OpMode {
         vision.updateAimTarget(drive, stopLatched || gamepad1.b,
                 gamepad1.right_trigger > TeleOpConstants.triggerThreshold);
         distanceCm = vision.hasValidAimingTarget()
-                ? DistanceUnit.INCH.toCm(vision.getTagCenterHorizontalDistanceInches()) : Double.NaN;
+                ? DistanceUnit.INCH.toCm(vision.getTargetHorizontalDistanceInches()) : Double.NaN;
     }
 
     private void showTelemetry() {
@@ -104,7 +104,7 @@ public class ShooterTest extends OpMode {
         telemetry.addLine("RT: distance-based shot. Release RT: shared standby power. B stops until RT is released.");
         telemetry.addData("Alliance", vision.getAlliance());
         telemetry.addData("Target", vision.getSelectedCluster().map(Enum::name).orElse("NONE"));
-        telemetry.addData("Robot center to four-tag center", "%.1f cm", distanceCm);
+        telemetry.addData("Robot center to CELL opening center", "%.1f cm", distanceCm);
         telemetry.addData("Target status", vision.getTargetStatus());
         telemetry.addData("Calibration status", vision.getCalibrationStatus());
         telemetry.addData("Calibration cooldown (s)", vision.getCalibrationCooldownRemainingSeconds());

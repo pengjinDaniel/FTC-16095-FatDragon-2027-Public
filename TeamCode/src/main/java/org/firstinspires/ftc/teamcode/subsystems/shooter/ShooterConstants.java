@@ -11,9 +11,9 @@ public class ShooterConstants {
     public static String rightShooterName = "rightShooterMotor";
 
     public static DcMotorSimple.Direction leftShooterDirection =
-            DcMotorSimple.Direction.REVERSE;
-    public static DcMotorSimple.Direction rightShooterDirection =
             DcMotorSimple.Direction.FORWARD;
+    public static DcMotorSimple.Direction rightShooterDirection =
+            DcMotorSimple.Direction.REVERSE;
 
     public static double idlePower = 0.55;
     public static double maxPower = 1;
@@ -25,24 +25,25 @@ public class ShooterConstants {
     public static double pitchSettleTimeSeconds = 0.2;
     public static double pitchChangeResetThreshold = 0.005;
 
-    // Measure horizontally from robot center to the current CELL's four-AprilTag centroid, in cm.
+    // Measure horizontally from robot center to the current CELL's opening center, in cm.
+    // Remeasure distances previously calibrated to the four-AprilTag centroid.
     // Velocity values are encoder ticks/s; pitch values are servo positions, not angles.
-    public static double centerDistanceCm = 60.6;
-    public static double centerVelocityTicksPerSecond = 1560.0;
-    public static double centerPitchPosition = 0.54;
-    public static double wallDistanceCm = 163.5;
-    public static double wallVelocityTicksPerSecond = 1840.0;
-    public static double wallPitchPosition = 0.26;
+    public static double centerDistanceCm = 57.3;
+    public static double centerVelocityTicksPerSecond = 1545.0;
+    public static double centerPitchPosition = 0.5;
+    public static double wallDistanceCm = 139.0;
+    public static double wallVelocityTicksPerSecond = 1745.0;
+    public static double wallPitchPosition = 0.29;
 
     // Extra points: {distanceCm, velocityTicksPerSecond, pitchServoPosition}.
     // Interpolated starting values, not measurements; replace each row with measured data.
     // Points may be in any order, but distances must be unique (including center/wall).
     // Use an empty array to return to center/wall-only interpolation.
     public static double[][] additionalShotPoints = {
-            {99.0, 1660.0, 0.41},
-            {129.0, 1680.0, 0.34},
-            {75.0, 1580.0, 0.46},
-            {139.0, 1800, 0.33}
+            {98.4, 1625.0, 0.37},
+            {128.0, 1695.0, 0.3},
+            {74.8, 1565.0, 0.42},
+            {140.0, 1746, 0.29}
     };
 
     // Enables the selected shared PID configuration; verify its gains on the robot.
@@ -51,7 +52,7 @@ public class ShooterConstants {
     public static double kI = 0.0;
     public static double kD = 0.0;
     // Feedforward is power per tick/s; leave feedback headroom at the shot targets.
-    public static double kF = 0.0004;
+    public static double kF = 0.00058;
 
     // Fractional speed tolerances; fixed power uses a stable measured reference.
     public static double readyEnterTolerance = 0.06;

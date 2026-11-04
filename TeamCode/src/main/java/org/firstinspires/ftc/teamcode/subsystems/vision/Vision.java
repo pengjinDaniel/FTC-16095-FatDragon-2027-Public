@@ -203,7 +203,7 @@ public class Vision extends SubsystemBase {
         observedClusterStates = Collections.unmodifiableMap(states);
     }
 
-    // Distance-only callers keep normal calibration without starting an RT aim session.
+    // Distance-only callers share idle calibration without starting an RT aim session.
     public void updateAimTarget(Drive drive, boolean stopped) {
         updateAimTarget(drive, stopped, false);
     }
@@ -328,13 +328,15 @@ public class Vision extends SubsystemBase {
     }
 
     public String getRtCalibrationStatus() {
-        return !rtAimRequested ? "RT released: continuous vision calibration"
-                : rtStopLatched ? "B stop latched; release RT to resume"
-                : "RT held: vision calibration paused; using Pinpoint";
+        if (rtStopLatched) return "B stop latched; release RT to resume";
+        return rtAimRequested ? "RT held: vision calibration paused; using Pinpoint" : calibrationStatus;
     }
 
     public String getCalibrationStatus() { return calibrationStatus; }
-    public double getCalibrationCooldownRemainingSeconds() { return 0.0; }
+    // Retained for existing callers; continuous calibration has no cooldown.
+    public double getCalibrationCooldownRemainingSeconds() {
+        return 0.0;
+    }
     public double getSecondsSinceLastCalibration() {
         return calibrationSucceeded
                 ? Math.max(0.0, (System.nanoTime() - lastSuccessfulCalibrationNanos) / 1_000_000_000.0)

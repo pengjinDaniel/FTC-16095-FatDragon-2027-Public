@@ -20,7 +20,8 @@ import org.firstinspires.ftc.teamcode.subsystems.drive.DriveConstants;
 import java.util.OptionalDouble;
 
 public class Constants {
-    // Replace these blocks with the corresponding AutoTune Java exports after tuning.
+    // Motor names, directions and pod geometry are shared with the competition Drive.
+    // Apply measured hardware changes to DriveConstants; its pod offsets are in millimeters.
     public static MecanumConfig drivetrainConfig = new MecanumConfig(c -> {
         c.frontLeftName.set(DriveConstants.leftFrontMotorName);
         c.backLeftName.set(DriveConstants.leftBackMotorName);

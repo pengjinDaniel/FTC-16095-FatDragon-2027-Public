@@ -146,7 +146,7 @@ public class ShootAssistCommand extends CommandBase {
         }
 
         double distanceCm = validAimingTarget ? DistanceUnit.INCH.toCm(
-                vision.getTagCenterHorizontalDistanceInches()) : Double.NaN;
+                vision.getTargetHorizontalDistanceInches()) : Double.NaN;
         if (!shooter.setDistanceTarget(distanceCm)) {
             // Invalid targeting also cancels an already committed feed.
             resetFiringSequence(FiringState.WAITING);
