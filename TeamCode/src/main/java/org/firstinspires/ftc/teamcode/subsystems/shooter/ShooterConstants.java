@@ -28,22 +28,22 @@ public class ShooterConstants {
     // Measure horizontally from robot center to the current CELL's opening center, in cm.
     // Remeasure distances previously calibrated to the four-AprilTag centroid.
     // Velocity values are encoder ticks/s; pitch values are servo positions, not angles.
-    public static double centerDistanceCm = 57.3;
-    public static double centerVelocityTicksPerSecond = 1545.0;
-    public static double centerPitchPosition = 0.5;
-    public static double wallDistanceCm = 139.0;
-    public static double wallVelocityTicksPerSecond = 1745.0;
-    public static double wallPitchPosition = 0.29;
+    public static double centerDistanceCm = 61.1;
+    public static double centerVelocityTicksPerSecond = 1540.0;
+    public static double centerPitchPosition = 0.52;
+    public static double wallDistanceCm = 152.5;
+    public static double wallVelocityTicksPerSecond = 1740.0;
+    public static double wallPitchPosition = 0.3;
 
     // Extra points: {distanceCm, velocityTicksPerSecond, pitchServoPosition}.
     // Interpolated starting values, not measurements; replace each row with measured data.
     // Points may be in any order, but distances must be unique (including center/wall).
     // Use an empty array to return to center/wall-only interpolation.
     public static double[][] additionalShotPoints = {
-            {98.4, 1625.0, 0.37},
-            {128.0, 1695.0, 0.3},
-            {74.8, 1565.0, 0.42},
-            {140.0, 1746, 0.29}
+            {96.3, 1600.0, 0.35},
+            {115.0, 1635.0, 0.32},
+            {77.7, 1570.0, 0.38},
+            {132.7, 1690, 0.32}
     };
 
     // Enables the selected shared PID configuration; verify its gains on the robot.

@@ -77,6 +77,10 @@ public class Shooter extends SubsystemBase {
     }
 
     public boolean setDistanceTarget(double distanceCm) {
+        return setDistanceTarget(distanceCm, true);
+    }
+
+    public boolean setDistanceTarget(double distanceCm, boolean updatePitch) {
         double[][] points = getDistanceShotPoints();
         if (!areDistanceShotValuesValid(points) || !Double.isFinite(distanceCm) || distanceCm < 0.0) {
             stop();
@@ -94,8 +98,10 @@ public class Shooter extends SubsystemBase {
         double fraction = lower == upper ? 0.0
                 : (distanceCm - lower[0]) / (upper[0] - lower[0]);
         double velocity = (1.0 - fraction) * lower[1] + fraction * upper[1];
-        double pitch = (1.0 - fraction) * lower[2] + fraction * upper[2];
-        setPitchPosition(pitch);
+        if (updatePitch) {
+            double pitch = (1.0 - fraction) * lower[2] + fraction * upper[2];
+            setPitchPosition(pitch);
+        }
         setTargetVelocity(velocity);
         return hasTargetVelocity();
     }

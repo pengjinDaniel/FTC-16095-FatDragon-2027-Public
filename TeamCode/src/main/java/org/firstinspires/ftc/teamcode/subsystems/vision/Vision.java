@@ -22,6 +22,8 @@ import java.util.Map;
 import java.util.Optional;
 
 public class Vision extends SubsystemBase {
+    private static final int REQUIRED_RT_CALIBRATIONS = 2;
+
     private final Limelight3A limelight;
     private final Alliance alliance;
     private final int pipelineIndex;
@@ -54,6 +56,7 @@ public class Vision extends SubsystemBase {
     private boolean calibrationSucceeded;
     private long lastSuccessfulCalibrationNanos;
     private boolean rtAimRequested;
+    private int rtCalibrationSuccessCount;
     private boolean rtStopLatched;
     private boolean validAimingTarget;
     private boolean validShootingTarget;
@@ -214,11 +217,12 @@ public class Vision extends SubsystemBase {
 
     void updateAimTarget(Drive drive, boolean stopped, boolean aimRequested, long nowNanos) {
         if (!aimRequested) {
+            rtCalibrationSuccessCount = 0;
             rtStopLatched = false;
         }
         rtAimRequested = aimRequested;
         if (stopped && aimRequested) rtStopLatched = true;
-        updateFieldTarget(drive, !stopped && !rtStopLatched && !aimRequested, nowNanos);
+        updateFieldTarget(drive, !stopped && !rtStopLatched, nowNanos);
         if (stopped) calibrationStatus = "Paused: B stop";
     }
 
@@ -288,12 +292,11 @@ public class Vision extends SubsystemBase {
     }
 
     private void updateLocalization(Drive drive, boolean correctFromVision, long nowNanos) {
-        if (rtAimRequested || !correctFromVision) {
-            calibrationStatus = rtStopLatched ? "Paused: B stop"
-                    : rtAimRequested ? "RT held: vision calibration paused; using Pinpoint"
-                    : "Vision correction not requested";
+        if (!correctFromVision || rtStopLatched) {
+            calibrationStatus = rtStopLatched ? "Paused: B stop" : "Vision correction not requested";
             return;
         }
+        if (rtCalibrationSuccessCount >= REQUIRED_RT_CALIBRATIONS) return;
         if (correctedRobotFieldPose == null) {
             drive.resetVisionRejectionSequence();
             calibrationStatus = "Waiting for corrected vision: " + poseStatus;
@@ -304,8 +307,10 @@ public class Vision extends SubsystemBase {
         if (applied) {
             calibrationSucceeded = true;
             lastSuccessfulCalibrationNanos = nowNanos;
+            if (rtAimRequested) rtCalibrationSuccessCount++;
         }
-        calibrationStatus = drive.getLocalizationStatus();
+        calibrationStatus = rtAimRequested && !applied && drive.hasAcceptedVisionFrame(frameTimestamp)
+                ? "Waiting for a new Limelight frame" : drive.getLocalizationStatus();
     }
 
     private double[] getFieldTarget(CellCluster cluster) {
@@ -318,21 +323,23 @@ public class Vision extends SubsystemBase {
                 && Double.isFinite(target[0]) && Double.isFinite(target[1]) ? target : null;
     }
 
-    // Retained for callers of the former RT calibration API.
     public boolean shouldPauseForAimCalibration() {
-        return false;
+        return !rtStopLatched && !isAimCalibrationReady() && correctedRobotFieldPose != null;
     }
 
     public boolean isAimCalibrationReady() {
-        return !rtAimRequested || !rtStopLatched;
+        return !rtAimRequested || (!rtStopLatched && rtCalibrationSuccessCount >= REQUIRED_RT_CALIBRATIONS);
     }
 
     public String getRtCalibrationStatus() {
         if (rtStopLatched) return "B stop latched; release RT to resume";
-        return rtAimRequested ? "RT held: vision calibration paused; using Pinpoint" : calibrationStatus;
+        if (!rtAimRequested) return calibrationStatus;
+        String progress = rtCalibrationSuccessCount + "/" + REQUIRED_RT_CALIBRATIONS;
+        return isAimCalibrationReady() ? "RT calibration complete (" + progress + "). Using Pinpoint"
+                : "RT calibration pending (" + progress + "). " + calibrationStatus;
     }
 
-    public String getCalibrationStatus() { return calibrationStatus; }
+    public String getCalibrationStatus() { return getRtCalibrationStatus(); }
     // Retained for existing callers; continuous calibration has no cooldown.
     public double getCalibrationCooldownRemainingSeconds() {
         return 0.0;
