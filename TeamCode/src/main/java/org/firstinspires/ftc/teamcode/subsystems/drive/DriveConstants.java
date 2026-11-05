@@ -43,6 +43,8 @@ public class DriveConstants {
     public static volatile double autoAimKi = 0.0;
     public static volatile double autoAimKd = -0.02;
     public static volatile double autoAimKf = 0.0;
+    // Additive turn power outside the aim-lock tolerance; verify on the robot.
+    public static volatile double autoAimKs = 0.08;
     public static volatile double autoAimYawToTurnSign = 1.0;
     public static volatile double autoAimMaxTurnPower = 0.65;
     public static volatile double autoAimTestMaxTurnPower = 0.65;

@@ -21,6 +21,7 @@ public class AutoAimPidfCheck {
         DriveConstants.autoAimKi = i;
         DriveConstants.autoAimKd = d;
         DriveConstants.autoAimKf = f;
+        DriveConstants.autoAimKs = 0.0;
         DriveConstants.autoAimYawToTurnSign = 1.0;
         DriveConstants.autoAimMaxTurnPower = 1.0;
         DriveConstants.autoAimTestMaxTurnPower = 1.0;
@@ -55,11 +56,65 @@ public class AutoAimPidfCheck {
         stableSince.setLong(aim, System.nanoTime() - 1_000_000_000L);
         aim.calculateTurnPower(true, 1.0);
         check(aim.isLocked(), "one degree of stable residual error may release a shot");
-        aim.calculateTurnPower(true, 3.0);
-        check(!aim.isLocked(), "returning to three degrees clears precision lock");
+        aim.calculateTurnPower(true, DriveConstants.aimUnlockToleranceDegrees);
+        check(aim.isLocked(), "the unlock boundary retains precision lock");
+        aim.calculateTurnPower(true, DriveConstants.aimUnlockToleranceDegrees + 0.1);
+        check(!aim.isLocked(), "exceeding the unlock boundary clears precision lock");
+    }
+
+    private static void staticTurnCompensation() {
+        gains(-1.0, 0.0, 0.0, 0.0);
+        DriveConstants.autoAimKs = 0.08;
+        DriveConstants.aimLockToleranceDegrees = 2.0;
+        DriveConstants.aimUnlockToleranceDegrees = 3.0;
+        AutoAimController aim = new AutoAimController();
+        double five = Math.toRadians(5.0);
+        close(aim.calculateTurnPower(true, 5.0), -five - 0.08, "static power reinforces positive-error correction");
+        close(aim.calculateTurnPower(true, -5.0), five + 0.08, "static power reinforces negative-error correction");
+        close(aim.calculateTurnPower(true, 2.0), -Math.toRadians(2.0), "no static kick at positive lock boundary");
+        close(aim.calculateTurnPower(true, -2.0), Math.toRadians(2.0), "no static kick at negative lock boundary");
+        close(aim.calculateTurnPower(true, 1.0), -Math.toRadians(1.0), "ordinary PID remains active inside tolerance");
+        close(aim.calculateTurnPower(true, 0.0), 0.0, "zero error does not receive static power");
+        close(aim.calculateTurnPower(true, 2.1), -Math.toRadians(2.1) - 0.08, "static power starts outside tolerance");
+
+        DriveConstants.autoAimKs = 0.10;
+        close(aim.calculateTurnPower(true, 5.0), -five - 0.10, "static power updates live");
+        DriveConstants.autoAimKs = 0.0;
+        close(aim.calculateTurnPower(true, 5.0), -five, "zero static power restores the original PIDF output");
+        DriveConstants.autoAimKs = 0.08;
+        DriveConstants.autoAimYawToTurnSign = -1.0;
+        close(aim.calculateTurnPower(true, 5.0), five + 0.08, "configured turn sign also reverses static power");
+
+        DriveConstants.autoAimYawToTurnSign = 1.0;
+        DriveConstants.autoAimTestMaxTurnPower = 0.10;
+        close(aim.calculateTurnPower(true, 5.0), -0.10, "positive-error compensation respects the turn cap");
+        close(aim.getRawTurnPower(), -five - 0.08, "raw telemetry includes compensation before clipping");
+        close(aim.calculateTurnPower(true, -5.0), 0.10, "negative-error compensation respects the turn cap");
+        close(aim.calculateTurnPower(false, 5.0), 0.0, "missing target stops compensated turning");
+        close(aim.getRawTurnPower(), 0.0, "missing target clears compensated telemetry");
+        close(aim.calculateTurnPower(true, Double.NaN), 0.0, "invalid error stops compensated turning");
+
+        DriveConstants.autoAimTestMaxTurnPower = 1.0;
+        for (double invalid : new double[]{-0.01, 1.01, Double.NaN, Double.POSITIVE_INFINITY}) {
+            DriveConstants.autoAimKs = invalid;
+            close(aim.calculateTurnPower(true, 5.0), 0.0, "invalid static power stops output: " + invalid);
+            check(!aim.isLocked() && aim.getRawTurnPower() == 0.0, "invalid static power resets control state");
+        }
+
+        gains(0.0, 0.0, 0.0, 0.0);
+        DriveConstants.autoAimKs = 0.08;
+        aim = new AutoAimController();
+        close(aim.calculateTurnPower(true, 5.0), 0.0, "static power does not invent a missing turn direction");
+
+        gains(-1.0, 0.0, 0.0, 0.0);
+        DriveConstants.autoAimKs = 0.08;
+        DriveConstants.autoAimAcquisitionTurnPower = 0.15;
+        aim = new AutoAimController();
+        close(aim.calculateTurnPower(true, 5.0, false), -0.15, "acquisition keeps its existing fixed turn power");
     }
 
     public static void main(String[] args) throws Exception {
+        close(DriveConstants.autoAimKs, 0.08, "default static power is the provisional 0.08");
         defaultPrecisionRejectsVisibleResidualError();
         double ten = Math.toRadians(10.0);
         gains(0.0, 0.0, 0.02, 0.0);
@@ -166,7 +221,9 @@ public class AutoAimPidfCheck {
         DriveConstants.autoAimAcquisitionTurnPower = Double.NaN;
         close(aim.calculateTurnPower(true, 10.0, false), 0.0, "nonfinite search power stops output");
 
+        staticTurnCompensation();
+
         System.out.println("PASS AutoAimPidfCheck: " + checks
-                + " actual-FTCLib PIDF, live tuning, limits, reset and lock assertions");
+                + " actual-FTCLib PIDF, static compensation, live tuning, limits, reset and lock assertions");
     }
 }
