@@ -4,7 +4,6 @@ import static com.pedropathing.api.Paths.curve;
 import static com.pedropathing.api.Paths.line;
 
 import com.arcrobotics.ftclib.command.Command;
-import com.arcrobotics.ftclib.command.CommandBase;
 import com.arcrobotics.ftclib.command.CommandScheduler;
 import com.arcrobotics.ftclib.command.FunctionalCommand;
 import com.arcrobotics.ftclib.command.InstantCommand;
@@ -19,6 +18,7 @@ import com.qualcomm.hardware.gobilda.GoBildaPinpointDriver;
 import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
 import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 
+import org.firstinspires.ftc.teamcode.commands.AutoShootCommand;
 import org.firstinspires.ftc.teamcode.pedro.Constants;
 import org.firstinspires.ftc.teamcode.subsystems.intake.Intake;
 import org.firstinspires.ftc.teamcode.subsystems.shooter.Shooter;
@@ -26,7 +26,6 @@ import org.firstinspires.ftc.teamcode.subsystems.transit.Transit;
 import org.firstinspires.ftc.teamcode.subsystems.vision.Alliance;
 import org.firstinspires.ftc.teamcode.subsystems.vision.AutoHiveTarget;
 import org.firstinspires.ftc.teamcode.subsystems.vision.CellCluster;
-import org.firstinspires.ftc.teamcode.subsystems.vision.HiveState;
 import org.firstinspires.ftc.teamcode.subsystems.vision.Vision;
 
 @Autonomous(name = "test", group = "Auto")
@@ -37,6 +36,9 @@ public class Test extends LinearOpMode {
     private Transit transit;
     private Vision vision;
     private AutoHiveTarget target;
+    private GoBildaPinpointDriver pinpoint;
+    private AutoShootCommand activeShot;
+    private static final long SHOT_TIMEOUT_MS = 5000;
     private String stage = "INIT";
 
     private final PoseFactory poseFactory = PoseFactory.degrees();
@@ -90,11 +92,12 @@ public class Test extends LinearOpMode {
             transit = new Transit(hardwareMap);
             vision = new Vision(hardwareMap, Alliance.RED);
             target = new AutoHiveTarget(vision, CellCluster.RED_OPPOSITE_AUDIENCE);
-            GoBildaPinpointDriver pinpoint = hardwareMap.get(
+            pinpoint = hardwareMap.get(
                     GoBildaPinpointDriver.class, Constants.localizerConfig.name.get());
             follower.setPose(start);
             follower.update();
             scheduler.addButton(() -> {
+                if (activeShot != null) return;
                 target.update(follower.pose());
                 if (isStarted() && !isStopRequested()) {
                     shooter.setDistanceTarget(target.getDistanceCm());
@@ -183,67 +186,32 @@ public class Test extends LinearOpMode {
     }
 
     private Command shootFor(long milliseconds, boolean waitForHigh) {
-        return new CommandBase() {
-            private long feedStartedNanos;
-
-            {
-                addRequirements(intake, transit);
-            }
-
+        return new AutoShootCommand(follower, shooter, intake, transit, target,
+                () -> pinpoint.getDeviceStatus() == GoBildaPinpointDriver.DeviceStatus.READY,
+                milliseconds, SHOT_TIMEOUT_MS, waitForHigh) {
             @Override
             public void initialize() {
-                feedStartedNanos = -1;
-                transit.cancelFeeding();
-                intake.updateInputs(false, false);
-            }
-
-            @Override
-            public void execute() {
-                intake.updateInputs(false, false);
-                if (!Double.isFinite(target.getDistanceCm()) || !shooter.hasTargetVelocity()) {
-                    transit.cancelFeeding();
-                    feedStartedNanos = -1;
-                    stage = "Waiting for a valid shot distance";
-                    return;
-                }
-                if (waitForHigh && feedStartedNanos < 0 && target.getState() != HiveState.HIGH) {
-                    transit.cancelFeeding();
-                    stage = "Waiting for HIGH: " + target.getState();
-                    return;
-                }
-
-                transit.requestFeed(shooter.isReady() && shooter.isPitchReady());
-                if (transit.getFiringState() == Transit.FiringState.FEEDING) {
-                    // Readiness waiting and the transit reverse pulse do not consume shot time.
-                    if (feedStartedNanos < 0) feedStartedNanos = System.nanoTime();
-                    stage = "Shooting: " + milliseconds + " ms";
-                } else {
-                    stage = "Preparing shot: " + transit.getFiringState();
-                }
-            }
-
-            @Override
-            public boolean isFinished() {
-                return feedStartedNanos >= 0
-                        && (System.nanoTime() - feedStartedNanos) / 1_000_000L >= milliseconds;
+                activeShot = this;
+                super.initialize();
             }
 
             @Override
             public void end(boolean interrupted) {
-                if (transit.getState() == Transit.TransitState.OPEN) intake.clearBallCount();
-                transit.cancelFeeding();
-                intake.stop();
+                super.end(interrupted);
+                stage = getStatus();
+                activeShot = null;
             }
         };
     }
 
     private void showTelemetry() {
-        telemetry.addData("Stage", stage);
+        telemetry.addData("Stage", activeShot == null ? stage : activeShot.getStatus());
         telemetry.addData("X / Y / heading", "%.2f / %.2f / %.1f",
                 follower.pose().x(), follower.pose().y(), Math.toDegrees(follower.pose().heading()));
         telemetry.addData("CELL / HIVE", "%s / %s", target.getCluster(), target.getState());
         telemetry.addData("HIVE observation", target.getStatus());
         telemetry.addData("Shot distance (cm)", target.getDistanceCm());
+        telemetry.addData("Shot yaw error (deg)", target.getYawErrorDegrees());
         telemetry.addData("Shooter ready", shooter.isReady() && shooter.isPitchReady());
         telemetry.addData("Transit", transit.getFiringState());
         telemetry.addData("Balls", intake.getBallCount());

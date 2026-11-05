@@ -22,6 +22,7 @@ public class Intake extends SubsystemBase {
     private boolean reverseRequested;
     private boolean intakeRequested;
     private boolean shootRequested;
+    private boolean shotFeedEnabled = true;
     private FlowerState flowerState = FlowerState.RAISED;
 
     public enum FlowerState {
@@ -51,6 +52,17 @@ public class Intake extends SubsystemBase {
         this.jamRequested = jamRequested;
         this.intakeRequested = intakeRequested;
         this.shootRequested = shootRequested;
+        shotFeedEnabled = true;
+        updateMotorPower();
+    }
+
+    /** Holds collected balls while aiming; feeds only after the shot gate opens. */
+    public void updateShotFeed(boolean feeding) {
+        jamRequested = false;
+        reverseRequested = false;
+        intakeRequested = false;
+        shootRequested = true;
+        shotFeedEnabled = feeding;
         updateMotorPower();
     }
 
@@ -148,7 +160,7 @@ public class Intake extends SubsystemBase {
         if (jamRequested || reverseRequested) {
             setPower(IntakeConstants.jamPower);
         } else if (shootRequested) {
-            setPower(IntakeConstants.feedPower);
+            setPower(shotFeedEnabled ? IntakeConstants.feedPower : 0.0);
         } else if (ballCount >= IntakeConstants.maxBallCount) {
             setPower(IntakeConstants.fullReversePower);
         } else if (!Double.isFinite(distanceCm) || distanceCm < 0.0) {

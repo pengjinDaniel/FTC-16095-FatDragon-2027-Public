@@ -7,7 +7,9 @@ import com.pedropathing.drivetrain.DrivePowers;
 import com.pedropathing.drivetrain.Drivetrain;
 import com.pedropathing.follower.Follower;
 import com.pedropathing.math.Pose;
+import com.pedropathing.math.Velocity;
 import com.pedropathing.paths.Path;
+import com.qualcomm.hardware.gobilda.GoBildaPinpointDriver;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.util.ElapsedTime;
@@ -16,6 +18,7 @@ import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.Pose3D;
 import org.firstinspires.ftc.robotcore.external.navigation.Position;
 import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles;
+import org.firstinspires.ftc.teamcode.commands.AutoShootCommand;
 import org.firstinspires.ftc.teamcode.pedro.Constants;
 import org.firstinspires.ftc.teamcode.subsystems.intake.Intake;
 import org.firstinspires.ftc.teamcode.subsystems.shooter.Shooter;
@@ -132,7 +135,9 @@ public class TestAutoCheck {
 
     private static class Motors implements Drivetrain {
         boolean stopped;
-        public void drive(DrivePowers powers, boolean manual) { }
+        int writes;
+        DrivePowers last;
+        public void drive(DrivePowers powers, boolean manual) { writes++; last = powers; }
         public double maxScaling(DrivePowers a, DrivePowers b) { return 1; }
         public void stop() { stopped = true; }
         public void stop(boolean brake) { stop(); }
@@ -148,17 +153,20 @@ public class TestAutoCheck {
         @Override public void follow(Path path) { seen.add(path); busy = true; }
         @Override public boolean isBusy() { return busy; }
         @Override public Pose pose() { return current; }
-        @Override public void stop() { busy = false; }
+        @Override public Velocity velocity() { return Velocity.zero(); }
+        @Override public void stop() { super.stop(); busy = false; }
         void finish() { current = seen.get(seen.size() - 1).endPose(); busy = false; }
     }
 
     private static class Collector extends Intake {
         boolean requested;
         int clears;
+        boolean feeding;
+        @Override public void updateShotFeed(boolean enabled) { requested = false; feeding = enabled; }
         Collector() { super(null); }
         @Override public void updateInputs(boolean intake, boolean jam) { requested = intake; }
         @Override public void clearBallCount() { clears++; }
-        @Override public void stop() { requested = false; }
+        @Override public void stop() { requested = false; feeding = false; }
         @Override public void periodic() { }
     }
 
@@ -173,7 +181,19 @@ public class TestAutoCheck {
         @Override public boolean hasTargetVelocity() { return targetSet; }
         @Override public boolean isReady() { return ready; }
         @Override public boolean isPitchReady() { return true; }
+        @Override public void stop() { targetSet = false; }
         @Override public void periodic() { }
+    }
+
+    private static class Odometry extends GoBildaPinpointDriver {
+        Odometry() { super(null, false); }
+        @Override public DeviceStatus getDeviceStatus() { return DeviceStatus.READY; }
+    }
+
+    private static class ShotTarget extends AutoHiveTarget {
+        ShotTarget(Vision vision) { super(vision, CellCluster.RED_OPPOSITE_AUDIENCE); }
+        // The scheduler test supplies observations; checkHive exercises the real geometry.
+        @Override public void update(Pose pose) { }
     }
 
     private static Transit transit() throws Exception {
@@ -216,6 +236,7 @@ public class TestAutoCheck {
         set(auto, Test.class, "shooter", shooter);
         set(auto, Test.class, "transit", transit);
         set(auto, Test.class, "target", target);
+        set(auto, Test.class, "pinpoint", ALLOCATOR.allocateInstance(Odometry.class));
         return auto;
     }
 
@@ -233,8 +254,9 @@ public class TestAutoCheck {
         Flywheels shooter = (Flywheels) ALLOCATOR.allocateInstance(Flywheels.class);
         Transit transit = transit();
         shooter.targetSet = true;
-        AutoHiveTarget target = new AutoHiveTarget(vision(), CellCluster.RED_OPPOSITE_AUDIENCE);
+        AutoHiveTarget target = new ShotTarget(vision());
         set(target, AutoHiveTarget.class, "distanceCm", 100.0);
+        set(target, AutoHiveTarget.class, "yawErrorDegrees", 0.0);
         Test auto = auto(paths, intake, shooter, transit, target);
         close(auto.path1().get(0).heading(), Math.toRadians(270), "first path heading");
         close(auto.path2().endPose().x(), 14.0701, "second path end X");
@@ -285,6 +307,7 @@ public class TestAutoCheck {
             }
             scheduler.run();
             boolean feeding = transit.getFiringState() == Transit.FiringState.FEEDING;
+            check(intake.feeding == feeding, "intake assists only during forward feed");
             if (feeding && !previousFeeding) feedStarted = System.nanoTime();
             if (!feeding && previousFeeding) {
                 long duration = System.nanoTime() - feedStarted;
@@ -304,6 +327,19 @@ public class TestAutoCheck {
         Command waitingShot = (Command) privateShot(auto, true);
         waitingShot.initialize();
         set(target, AutoHiveTarget.class, "state", HiveState.HIGH);
+        set(target, AutoHiveTarget.class, "yawErrorDegrees", 20.0);
+        waitingShot.execute();
+        check(paths.manual() && transit.getState() == Transit.TransitState.CLOSE && !intake.feeding,
+                "aim owns Follower MANUAL; misalignment blocks feeding");
+        check(((Motors) paths.drivetrain).writes == 0,
+                "the shot command requests power without directly driving the motors");
+        Field manualOutput = Follower.class.getDeclaredField("manualPowers");
+        manualOutput.setAccessible(true);
+        check(((DrivePowers) manualOutput.get(paths)).turn() > 0.0,
+                "TeleOp clockwise output is converted to Pedro CCW convention");
+        set(target, AutoHiveTarget.class, "yawErrorDegrees", 0.0);
+        waitingShot.execute();
+        Thread.sleep(170);
         waitingShot.execute();
         check(transit.getState() == Transit.TransitState.OPEN, "HIGH starts reverse/feed preparation");
         set(target, AutoHiveTarget.class, "state", HiveState.UNKNOWN);
@@ -312,8 +348,78 @@ public class TestAutoCheck {
         waitingShot.end(true);
         check(transit.getFiringState() == Transit.FiringState.IDLE && !intake.requested,
                 "cancellation stops feeding and intake");
+        Command relockShot = (Command) privateShot(auto, false);
+        relockShot.initialize(); relockShot.execute();
+        Thread.sleep(170); relockShot.execute();
+        Thread.sleep(115); relockShot.execute();
+        check(intake.feeding, "aligned and ready enables auxiliary intake feed");
+        set(target, AutoHiveTarget.class, "yawErrorDegrees", 10.0);
+        relockShot.execute();
+        check(transit.getState() == Transit.TransitState.CLOSE && !intake.feeding
+                && !relockShot.isFinished(), "lost alignment cancels feed and resets shot timer");
+        set(target, AutoHiveTarget.class, "yawErrorDegrees", Double.NaN);
+        relockShot.execute();
+        check(paths.idle() && ((Motors) paths.drivetrain).stopped, "invalid aim stops turning");
+        relockShot.end(true);
+        check(!intake.feeding && ((Motors) paths.drivetrain).stopped,
+                "interruption stops feed and drivetrain");
+
+        AutoShootCommand expiredShot = (AutoShootCommand) privateShot(auto, false);
+        expiredShot.initialize();
+        set(expiredShot, AutoShootCommand.class, "startedNanos", System.nanoTime() - 5_100_000_000L);
+        check(expiredShot.isFinished() && expiredShot.hasTimedOut(), "waiting counts toward shot timeout");
+        expiredShot.end(false);
+        check(expiredShot.getStatus().equals("Shot timed out") && !intake.feeding
+                && transit.getState() == Transit.TransitState.CLOSE && !shooter.targetSet,
+                "timeout stops the shooting mechanisms and reports the reason");
+
+        // Real Intake: waiting for aim must override full-bin reverse, then assist feeding.
+        Intake realIntake = (Intake) ALLOCATOR.allocateInstance(Intake.class);
+        DcMotor realMotor = (DcMotor) Proxy.newProxyInstance(DcMotor.class.getClassLoader(),
+                new Class<?>[]{DcMotor.class}, (p, method, values) -> null);
+        set(realIntake, Intake.class, "intakeMotor", realMotor);
+        set(realIntake, Intake.class, "ballCount", 4);
+        realIntake.updateShotFeed(false);
+        close(realIntake.getRequestedPower(), 0, "full bin held while aiming");
+        realIntake.updateShotFeed(true);
+        close(realIntake.getRequestedPower(), 0.5, "real intake assists feeding");
+        realIntake.stop();
+        close(realIntake.getRequestedPower(), 0, "real intake stops on cancellation");
+        checkFollowerOwnership(auto.path1());
         scheduler.reset();
         System.out.println("PASS TestAutoCheck: " + checks + " checks; real scheduler and transit timers");
+    }
+
+    private static void checkFollowerOwnership(Path path) {
+        Motors motors = new Motors();
+        int[] algorithmCalls = {0};
+        com.pedropathing.algorithm.Algorithm algorithm =
+                (com.pedropathing.algorithm.Algorithm) Proxy.newProxyInstance(
+                com.pedropathing.algorithm.Algorithm.class.getClassLoader(),
+                new Class<?>[]{com.pedropathing.algorithm.Algorithm.class}, (p, m, a) -> {
+                    if (m.getName().startsWith("calculate")) {
+                        algorithmCalls[0]++; return DrivePowers.zero();
+                    }
+                    if (m.getName().equals("isBusy")) return false;
+                    return null;
+                });
+        com.pedropathing.localization.Localizer localizer =
+                (com.pedropathing.localization.Localizer) Proxy.newProxyInstance(
+                com.pedropathing.localization.Localizer.class.getClassLoader(),
+                new Class<?>[]{com.pedropathing.localization.Localizer.class}, (p, m, a) -> null);
+        Follower follower = new Follower(localizer, motors, algorithm);
+        follower.hold(new Pose(0, 0, 0));
+        follower.manual(0, 0, 0.25);
+        follower.update(0.02);
+        check(motors.writes == 1 && algorithmCalls[0] == 0 && follower.manual(),
+                "aim MANUAL replaces endpoint HOLD; one drivetrain write, no hold controller");
+        close(motors.last.turn(), 0.25, "manual aim output reaches Pedro drivetrain");
+        follower.follow(path);
+        follower.update(0.02);
+        check(motors.writes == 2 && algorithmCalls[0] == 1 && follower.following(),
+                "next path regains exclusive Follower output");
+        follower.stop(); follower.update(0.02);
+        check(motors.stopped, "idle follower stops drivetrain");
     }
 
     private static Object privateShot(Test auto, boolean waitForHigh) throws Exception {

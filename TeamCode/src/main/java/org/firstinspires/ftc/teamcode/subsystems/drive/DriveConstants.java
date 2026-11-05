@@ -6,6 +6,10 @@ import com.qualcomm.robotcore.hardware.DcMotorSimple;
 
 @Config
 public class DriveConstants {
+    // User-measured robot footprint in mm (2026-11-04): forward/back length, side-to-side width.
+    public static double robotLengthMm = 419.0;
+    public static double robotWidthMm = 368.0;
+
     public static String leftFrontMotorName = "leftFrontMotor";
     public static String leftBackMotorName = "leftBackMotor";
     public static String rightFrontMotorName = "rightFrontMotor";
