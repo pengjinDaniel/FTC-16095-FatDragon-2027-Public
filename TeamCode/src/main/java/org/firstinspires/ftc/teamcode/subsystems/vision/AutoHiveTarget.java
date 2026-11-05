@@ -14,6 +14,7 @@ public class AutoHiveTarget {
     private HiveState state = HiveState.UNKNOWN;
     private double lastKnownAngleDegrees = Double.NaN;
     private double distanceCm = Double.NaN;
+    private double yawErrorDegrees = Double.NaN;
     private String status = "Waiting for a HIVE observation";
 
     public AutoHiveTarget(Vision vision, CellCluster cluster) {
@@ -27,6 +28,7 @@ public class AutoHiveTarget {
     public void update(Pose pedroPose) {
         state = HiveState.UNKNOWN;
         distanceCm = Double.NaN;
+        yawErrorDegrees = Double.NaN;
         status = vision.getPoseStatus();
         if (pedroPose == null || !Double.isFinite(pedroPose.x())
                 || !Double.isFinite(pedroPose.y()) || !Double.isFinite(pedroPose.heading())) {
@@ -68,6 +70,8 @@ public class AutoHiveTarget {
         // Use the same CELL opening as aiming; only a current observation can report HIGH.
         double[] target = fieldTarget();
         if (target != null) {
+            yawErrorDegrees = VisionMath.coordinateYawErrorDegrees(fieldPose,
+                    target[0], target[1], VisionConstants.shooterYawDegrees);
             distanceCm = DistanceUnit.INCH.toCm(Math.hypot(
                     target[0] - fieldPose.getX(DistanceUnit.INCH),
                     target[1] - fieldPose.getY(DistanceUnit.INCH)));
@@ -90,6 +94,7 @@ public class AutoHiveTarget {
 
     public HiveState getState() { return state; }
     public double getDistanceCm() { return distanceCm; }
+    public double getYawErrorDegrees() { return yawErrorDegrees; }
     public String getStatus() { return status; }
     public CellCluster getCluster() { return cluster; }
 }
