@@ -46,8 +46,10 @@ public class AutoAimController {
 
     public double calculateTurnPower(boolean hasValidTarget, double yawErrorDegrees) {
         double maxTurnPower = getEffectiveMaxTurnPower();
+        double staticTurnPower = DriveConstants.autoAimKs;
         if (!hasValidTarget || !Double.isFinite(yawErrorDegrees)
-                || !Double.isFinite(maxTurnPower) || maxTurnPower <= 0.0) {
+                || !Double.isFinite(maxTurnPower) || maxTurnPower <= 0.0
+                || !Double.isFinite(staticTurnPower) || staticTurnPower < 0.0 || staticTurnPower > 1.0) {
             reset();
             return 0.0;
         }
@@ -66,6 +68,10 @@ public class AutoAimController {
         double output = (controller.calculate(-yawErrorRadians, 0.0)
                 + DriveConstants.autoAimKf * yawErrorRadians)
                 * DriveConstants.autoAimYawToTurnSign;
+        // Reinforce the commanded turn only outside the aim-lock tolerance.
+        if (Math.abs(yawErrorDegrees) > DriveConstants.aimLockToleranceDegrees) {
+            output += Math.signum(output) * staticTurnPower;
+        }
         if (!Double.isFinite(output)) {
             reset();
             return 0.0;

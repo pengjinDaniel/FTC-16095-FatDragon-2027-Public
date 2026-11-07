@@ -33,7 +33,7 @@ public class DriveConstants {
     public static double maximumVisionPositionDifferenceInches = 1.0;
     public static double maximumVisionHeadingDifferenceDegrees = 5.0;
     public static int visionRejectedFramesBeforeOverride = 3;
-    public static boolean positionHoldCalibrated = false;
+    public static boolean positionHoldCalibrated = true;
     public static double positionHoldKp = 0.12;
     public static double positionHoldKi = 0.0;
     public static double positionHoldKd = 0.007;
@@ -47,11 +47,13 @@ public class DriveConstants {
     public static volatile double autoAimKi = 0.0;
     public static volatile double autoAimKd = -0.02;
     public static volatile double autoAimKf = 0.0;
+    // Additive turn power outside the aim-lock tolerance; verify on the robot.
+    public static volatile double autoAimKs = 0.06;
     public static volatile double autoAimYawToTurnSign = 1.0;
     public static volatile double autoAimMaxTurnPower = 0.65;
     public static volatile double autoAimTestMaxTurnPower = 0.65;
     public static volatile double autoAimAcquisitionTurnPower = 0.65;
-    public static volatile double aimLockToleranceDegrees = 4.5;
-    public static volatile double aimUnlockToleranceDegrees = 6.0;
+    public static volatile double aimLockToleranceDegrees = 2.0;
+    public static volatile double aimUnlockToleranceDegrees = 3.0;
     public static volatile double aimLockStableTimeSeconds = 0.15;
 }

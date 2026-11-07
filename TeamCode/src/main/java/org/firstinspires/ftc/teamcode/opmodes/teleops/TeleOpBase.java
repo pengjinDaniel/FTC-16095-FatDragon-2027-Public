@@ -72,10 +72,12 @@ public abstract class TeleOpBase extends CommandOpMode {
         drive.setDefaultCommand(new DriveCommand(drive, gamepadEx));
         intake.setDefaultCommand(new IntakeCommand(intake, transit, gamepadEx));
         shooter.setDefaultCommand(new RunCommand(() -> {
-            if (gamepad1.right_bumper) {
+            if (gamepad1.right_bumper || !vision.hasValidAimingTarget()) {
                 shooter.stop();
             } else {
-                shooter.idle();
+                shooter.setDistanceTarget(
+                        DistanceUnit.INCH.toCm(vision.getTargetHorizontalDistanceInches()),
+                        false); // Pre-spin only; pitch follows the shot when RT is held.
             }
         }, shooter));
 
@@ -130,8 +132,8 @@ public abstract class TeleOpBase extends CommandOpMode {
         String aimState = !started ? "等待START" : stopLatched ? "已停止"
                 : !isAutoAimEnabled() ? "手动瞄准（右摇杆转向，R2射击）"
                 : !aimRequested ? "未启动（按R2瞄准）"
+                : !vision.isAimCalibrationReady() ? vision.getRtCalibrationStatus()
                 : !vision.hasValidAimingTarget() ? "无有效瞄准目标"
-                : !vision.isAimCalibrationReady() ? "已停止（松开RT恢复）"
                 : aligned ? "已对准并稳定" : "未对准或尚未稳定";
         if (isAutoAimEnabled() && started && aimRequested && !stopLatched && vision.hasValidAimingTarget()) {
             aimState += String.format(java.util.Locale.US, "（误差 %.1f° / 放行 ±%.1f°）",
@@ -237,9 +239,9 @@ public abstract class TeleOpBase extends CommandOpMode {
         if (!aimRequested) return "未按R2";
         if (gamepad1.right_bumper) return "正在排堵";
         if (!Shooter.areDistanceShotValuesValid()) return "两点射击参数未填完整或超出限值";
-        if (!vision.hasValidAimingTarget()) return "定位或瞄准目标无效";
         if (isAutoAimEnabled() && !vision.isAimCalibrationReady())
-            return "已停止，松开R2恢复";
+            return vision.getRtCalibrationStatus();
+        if (!vision.hasValidAimingTarget()) return "定位或瞄准目标无效";
         if (shootAssistCommand.getFiringState() == Transit.FiringState.REVERSING)
             return "已放行，送球前反转中";
         if (!shooter.isReady()) return "射手转速尚未稳定";

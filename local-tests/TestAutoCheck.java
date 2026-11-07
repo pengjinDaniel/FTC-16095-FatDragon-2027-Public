@@ -20,14 +20,17 @@ import org.firstinspires.ftc.robotcore.external.navigation.Position;
 import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles;
 import org.firstinspires.ftc.teamcode.commands.AutoShootCommand;
 import org.firstinspires.ftc.teamcode.pedro.Constants;
+import org.firstinspires.ftc.teamcode.subsystems.drive.DriveConstants;
 import org.firstinspires.ftc.teamcode.subsystems.intake.Intake;
 import org.firstinspires.ftc.teamcode.subsystems.shooter.Shooter;
 import org.firstinspires.ftc.teamcode.subsystems.transit.Transit;
+import org.firstinspires.ftc.teamcode.subsystems.transit.TransitConstants;
 import org.firstinspires.ftc.teamcode.subsystems.vision.Alliance;
 import org.firstinspires.ftc.teamcode.subsystems.vision.AutoHiveTarget;
 import org.firstinspires.ftc.teamcode.subsystems.vision.CellCluster;
 import org.firstinspires.ftc.teamcode.subsystems.vision.HiveState;
 import org.firstinspires.ftc.teamcode.subsystems.vision.Vision;
+import org.firstinspires.ftc.teamcode.subsystems.vision.VisionConstants;
 import sun.misc.Unsafe;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -108,6 +111,12 @@ public class TestAutoCheck {
         frame(vision, robot, 30);
         target.update(robot);
         double distance = target.getDistanceCm();
+        double expectedYaw = Math.toDegrees(Math.atan2(-12.75 - (robot.y() - 72.0),
+                -17.7 - (robot.x() - 72.0))) - VisionConstants.shooterYawDegrees
+                - Math.toDegrees(robot.heading());
+        close(target.getYawErrorDegrees(), Math.IEEEremainder(expectedYaw, 360.0),
+                "autonomous yaw uses the same CELL opening and shooter offset as TeleOp");
+        double yaw = target.getYawErrorDegrees();
         close(distance, DistanceUnit.INCH.toCm(Math.hypot(
                 -17.7 - (robot.x() - 72.0), -12.75 - (robot.y() - 72.0))),
                 "autonomous uses the same CELL-opening center as aiming");
@@ -117,6 +126,7 @@ public class TestAutoCheck {
         target.update(robot);
         check(target.getState() == HiveState.UNKNOWN, "tag loss cannot reuse an old HIGH");
         close(target.getDistanceCm(), distance, "tag loss preserves distance geometry");
+        close(target.getYawErrorDegrees(), yaw, "tag loss preserves coordinate aiming");
         frame(vision, new Pose(robot.x() + 100, robot.y(), robot.heading()), 30);
         target.update(robot);
         check(target.getState() == HiveState.UNKNOWN, "out-of-gate observation cannot report HIGH");
@@ -127,6 +137,7 @@ public class TestAutoCheck {
         target.update(new Pose(Double.NaN, 0, 0));
         check(target.getState() == HiveState.UNKNOWN && Double.isNaN(target.getDistanceCm()),
                 "invalid odometry blocks shots");
+        check(Double.isNaN(target.getYawErrorDegrees()), "invalid odometry clears aiming error");
         boolean rejected = false;
         try { new AutoHiveTarget(vision, CellCluster.BLUE_AUDIENCE); }
         catch (IllegalArgumentException expected) { rejected = true; }
@@ -149,11 +160,16 @@ public class TestAutoCheck {
         final List<Path> seen = new ArrayList<>();
         Pose current = new Pose(58.7467, 8.8149, Math.toRadians(90));
         boolean busy;
+        DrivePowers manualRequest;
         Paths() { super(null, new Motors(), null); }
         @Override public void follow(Path path) { seen.add(path); busy = true; }
         @Override public boolean isBusy() { return busy; }
         @Override public Pose pose() { return current; }
         @Override public Velocity velocity() { return Velocity.zero(); }
+        @Override public void manual(DrivePowers powers) {
+            super.manual(powers);
+            manualRequest = powers;
+        }
         @Override public void stop() { super.stop(); busy = false; }
         void finish() { current = seen.get(seen.size() - 1).endPose(); busy = false; }
     }
@@ -173,14 +189,16 @@ public class TestAutoCheck {
     private static class Flywheels extends Shooter {
         boolean ready;
         boolean targetSet;
+        boolean pitchBlocked;
+        boolean rejectDistance;
         Flywheels() { super(null); }
         @Override public boolean setDistanceTarget(double distance) {
-            targetSet = Double.isFinite(distance);
+            targetSet = Double.isFinite(distance) && !rejectDistance;
             return targetSet;
         }
         @Override public boolean hasTargetVelocity() { return targetSet; }
         @Override public boolean isReady() { return ready; }
-        @Override public boolean isPitchReady() { return true; }
+        @Override public boolean isPitchReady() { return !pitchBlocked; }
         @Override public void stop() { targetSet = false; }
         @Override public void periodic() { }
     }
@@ -194,6 +212,13 @@ public class TestAutoCheck {
         ShotTarget(Vision vision) { super(vision, CellCluster.RED_OPPOSITE_AUDIENCE); }
         // The scheduler test supplies observations; checkHive exercises the real geometry.
         @Override public void update(Pose pose) { }
+    }
+
+    private static void aimAtCell(Paths paths) {
+        Pose pose = paths.current;
+        double heading = Math.atan2(-12.75 - (pose.y() - 72.0), -17.7 - (pose.x() - 72.0))
+                - Math.toRadians(VisionConstants.shooterYawDegrees);
+        paths.current = new Pose(pose.x(), pose.y(), heading);
     }
 
     private static Transit transit() throws Exception {
@@ -386,8 +411,114 @@ public class TestAutoCheck {
         realIntake.stop();
         close(realIntake.getRequestedPower(), 0, "real intake stops on cancellation");
         checkFollowerOwnership(auto.path1());
+        checkAutoShoot();
         scheduler.reset();
         System.out.println("PASS TestAutoCheck: " + checks + " checks; real scheduler and transit timers");
+    }
+
+    private static void checkAutoShoot() throws Exception {
+        Paths paths = new Paths();
+        Collector intake = (Collector) ALLOCATOR.allocateInstance(Collector.class);
+        Flywheels shooter = (Flywheels) ALLOCATOR.allocateInstance(Flywheels.class);
+        Transit transit = transit();
+        Vision vision = vision();
+        AutoHiveTarget target = new AutoHiveTarget(vision, CellCluster.RED_OPPOSITE_AUDIENCE);
+        boolean[] located = {true};
+        AutoShootCommand shot = new AutoShootCommand(paths, shooter, intake, transit, target,
+                () -> located[0], 900, 5000, false);
+        double stableTime = DriveConstants.aimLockStableTimeSeconds;
+        double reverseTime = TransitConstants.feedReverseTime;
+        boolean holdCalibrated = DriveConstants.positionHoldCalibrated;
+        try {
+            DriveConstants.aimLockStableTimeSeconds = 0;
+            TransitConstants.feedReverseTime = 0;
+            DriveConstants.positionHoldCalibrated = false;
+            shooter.targetSet = true;
+            shot.initialize();
+            check(shooter.targetSet, "shot initialization preserves pre-spun shooter");
+            check(shot.getRequirements().contains(shooter) && shot.getRequirements().contains(intake)
+                    && shot.getRequirements().contains(transit), "shot owns all three mechanisms");
+            aimAtCell(paths);
+            paths.current = new Pose(paths.current.x(), paths.current.y(),
+                    paths.current.heading() - Math.toRadians(10));
+            shot.execute();
+            check(transit.getState() == Transit.TransitState.CLOSE, "unlocked aim blocks feeding");
+            Motors motors = (Motors) paths.drivetrain;
+            check(paths.manualRequest.turn() > 0, "positive yaw error gives Pedro CCW power");
+            paths.current = new Pose(paths.current.x(), paths.current.y(),
+                    paths.current.heading() + Math.toRadians(20));
+            shot.execute();
+            check(paths.manualRequest.turn() < 0, "negative yaw error gives Pedro CW power");
+            aimAtCell(paths);
+            shot.execute();
+            shot.execute();
+            check(transit.getState() == Transit.TransitState.CLOSE, "shooter speed blocks feeding");
+            shooter.ready = true;
+            shooter.pitchBlocked = true;
+            shot.execute();
+            check(transit.getState() == Transit.TransitState.CLOSE, "pitch settling blocks feeding");
+            shooter.pitchBlocked = false;
+            shot.execute();
+            check(transit.getFiringState() == Transit.FiringState.FEEDING && intake.feeding,
+                    "ready shot uses both TeleOp feed outputs");
+            shooter.ready = false;
+            paths.current = new Pose(paths.current.x(), paths.current.y(), paths.current.heading() + .2);
+            shot.execute();
+            check(transit.getFiringState() == Transit.FiringState.IDLE && !intake.feeding,
+                    "lost aim pauses automatic feeding");
+            check(motors.writes == 0, "shot submits turn requests without driving the motors directly");
+            shooter.ready = true;
+            aimAtCell(paths);
+            shot.execute();
+            shot.execute();
+            check(intake.feeding, "feeding resumes after realigning");
+            located[0] = false;
+            shot.execute();
+            check(transit.getState() == Transit.TransitState.CLOSE && !intake.feeding
+                    && !shooter.targetSet && motors.stopped && paths.idle(),
+                    "localization loss closes the gate and stops every output");
+            located[0] = true;
+            shooter.rejectDistance = true;
+            shot.execute();
+            check(transit.getState() == Transit.TransitState.CLOSE && motors.stopped,
+                    "invalid distance calibration blocks feeding and motion");
+            shooter.rejectDistance = false;
+            paths.current = new Pose(Double.NaN, 0, 0);
+            shot.execute();
+            check(!shooter.targetSet && motors.stopped, "non-finite pose cannot keep a shot running");
+            set(shot, AutoShootCommand.class, "startedNanos", System.nanoTime() - 5_100_000_000L);
+            check(shot.isFinished() && shot.hasTimedOut(), "total timeout includes readiness waiting");
+            shot.end(false);
+            check(shot.getStatus().equals("Shot timed out"), "timeout is distinguishable from completion");
+            paths.current = new Pose(58.5392, 17.7643, 0);
+            aimAtCell(paths);
+            shooter.ready = true;
+            DriveConstants.positionHoldCalibrated = true;
+            shot.initialize();
+            check(!shot.hasTimedOut() && !shot.isFinished(), "rescheduling resets both shot timers");
+            shot.execute();
+            paths.current = new Pose(paths.current.x() + 3, paths.current.y() + 2,
+                    paths.current.heading());
+            shot.execute();
+            double fieldX = paths.manualRequest.forward() * Math.cos(paths.current.heading())
+                    - paths.manualRequest.strafe() * Math.sin(paths.current.heading());
+            double fieldY = paths.manualRequest.forward() * Math.sin(paths.current.heading())
+                    + paths.manualRequest.strafe() * Math.cos(paths.current.heading());
+            check(fieldX < 0 && fieldY < 0, "Pedro position hold pushes toward the original anchor");
+            shot.end(true);
+            check(motors.stopped && paths.idle() && !shooter.targetSet && !intake.feeding
+                    && transit.getState() == Transit.TransitState.CLOSE,
+                    "cancellation stops follower, flywheels, intake and transit");
+            boolean invalidTime = false;
+            try { new AutoShootCommand(paths, shooter, intake, transit, target, () -> true, 900, 800, false); }
+            catch (IllegalArgumentException expected) { invalidTime = true; }
+            check(invalidTime, "timeout shorter than feed duration is rejected");
+        } finally {
+            shot.end(true);
+            DriveConstants.aimLockStableTimeSeconds = stableTime;
+            TransitConstants.feedReverseTime = reverseTime;
+            DriveConstants.positionHoldCalibrated = holdCalibrated;
+        }
     }
 
     private static void checkFollowerOwnership(Path path) {

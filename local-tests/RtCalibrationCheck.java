@@ -187,116 +187,171 @@ public class RtCalibrationCheck {
                 "a new OpMode instance initializes on its first acceptable frame");
     }
 
-    private static void rtUsesOnlyOdometry() throws Exception {
+    private static void rtCalibratesTwiceThenUsesOdometry() throws Exception {
         Fixture f = new Fixture();
         f.initialize();
-        f.rt(pose(-200, -200, -90), 2, 20_000_000L);
-        check(f.vision.hasValidAimingTarget() && f.vision.isAimCalibrationReady()
-                        && !f.vision.shouldPauseForAimCalibration(),
-                "RT aims immediately from initialized odometry without five-frame sampling");
-        check(f.pp.writes == 1, "the RT rising edge cannot write a vision correction");
+        f.rt(FIXED, 1, 20_000_000L);
+        check(f.pp.writes == 1 && !f.vision.isAimCalibrationReady()
+                        && f.vision.shouldPauseForAimCalibration(),
+                "an idle frame already used before pressing RT cannot count again");
+        check(f.vision.getCalibrationStatus().contains("Waiting for a new Limelight frame"),
+                "a duplicate frame reports why RT is still waiting");
+        f.rt(pose(101, 40, 2), 2, 40_000_000L);
+        check(f.pp.writes == 2 && f.vision.hasValidAimingTarget() && !f.vision.isAimCalibrationReady()
+                        && f.vision.shouldPauseForAimCalibration(),
+                "the first accepted RT frame writes once and leaves calibration pending");
+        near(f.drive.getPose().getX(DistanceUnit.CM), 101, "the first RT correction writes X");
+        check(f.vision.getCalibrationStatus().contains("1/2"), "telemetry reports the first success");
+        f.rt(pose(101, 40, 2), 2, 50_000_000L);
+        check(f.pp.writes == 2 && !f.vision.isAimCalibrationReady(),
+                "a duplicate of the first success cannot complete calibration");
+        f.rt(pose(102, 40, 3), 3, 60_000_000L);
+        check(f.pp.writes == 3 && f.vision.isAimCalibrationReady() && !f.vision.shouldPauseForAimCalibration(),
+                "the second accepted RT frame completes calibration");
+        near(f.drive.getPose().getX(DistanceUnit.CM), 102, "the second RT correction writes X");
+        near(f.drive.getPose().getHeading(AngleUnit.DEGREES), 3, "the second RT correction writes heading");
+        check(f.vision.getCalibrationStatus().contains("2/2"), "telemetry reports both successes");
         double error = f.vision.getYawErrorDegrees();
         double distance = f.vision.getTagCenterHorizontalDistanceInches();
         for (int i = 0; i < 8; i++) {
-            f.rt(pose(-200 + i, -200, 90), 3 + i, 40_000_000L + i * 20_000_000L);
-            near(f.vision.getYawErrorDegrees(), error, "held RT ignores changing visual yaw and position");
+            f.rt(pose(-200 + i, -200, 90), 4 + i, 80_000_000L + i * 20_000_000L);
+            near(f.vision.getYawErrorDegrees(), error, "held RT ignores later visual yaw and position");
             near(f.vision.getTagCenterHorizontalDistanceInches(), distance, "held RT measures distance from OD");
             check(f.vision.getSelectedCluster().get() == CellCluster.BLUE_AUDIENCE,
                     "the OD field half selects the CELL during RT");
         }
-        check(f.pp.writes == 1, "held RT never calibrates, including after five new frames");
+        check(f.pp.writes == 3, "held RT permits exactly two successful vision corrections");
         f.pp.position = pose(-100, 40, 15);
-        f.rt(FIXED, 11, 220_000_000L);
+        f.rt(FIXED, 12, 240_000_000L);
         check(f.vision.getSelectedCluster().get() == CellCluster.BLUE_OPPOSITE_AUDIENCE,
                 "OD motion changes the live CELL selection");
         near(f.vision.getYawErrorDegrees(), VisionMath.coordinateYawErrorDegrees(
                 f.pp.position, -17.7, 12.75, VisionConstants.shooterYawDegrees),
                 "current OD pose controls yaw during RT");
-        for (long now : new long[]{240_000_000L, 340_000_000L, 1_000_000_000L}) {
+        for (long now : new long[]{260_000_000L, 340_000_000L, 1_000_000_000L}) {
             f.rt(null, 0, now);
-            check(f.vision.hasValidAimingTarget(), "tag loss does not pause valid OD aiming");
+            check(f.vision.hasValidAimingTarget() && f.vision.isAimCalibrationReady(),
+                    "tag loss preserves calibrated OD aiming");
         }
-        f.frame(pose(-100, 40, 15), 11, false, false, 1_020_000_000L);
-        check(f.pp.writes == 2, "RT release immediately resumes calibration within the former cooldown");
-        f.rt(pose(-200, -200, 90), 12, 2_000_000_000L);
-        check(f.pp.writes == 2, "an RT rising edge cannot calibrate");
-        f.frame(pose(-100, 40, 15), 13, false, false, 2_020_000_000L);
-        check(f.pp.writes == 3, "RT release immediately calibrates again");
-        f.rt(FIXED, 14, 4_000_000_000L);
-        check(f.pp.writes == 3, "held RT blocks calibration regardless of elapsed time");
-        f.frame(pose(-100, 40, 15), 15, false, false, 4_020_000_000L);
-        check(f.pp.writes == 4, "a later RT release resumes continuous idle calibration");
+        f.frame(pose(-100, 40, 15), 13, false, false, 1_020_000_000L);
+        check(f.pp.writes == 4, "RT release immediately resumes continuous idle calibration");
+        f.rt(pose(-99, 40, 16), 14, 1_040_000_000L);
+        check(f.pp.writes == 5 && !f.vision.isAimCalibrationReady(), "a new RT session starts counting again");
+        f.rt(pose(-98, 40, 16), 15, 1_060_000_000L);
+        check(f.pp.writes == 6 && f.vision.isAimCalibrationReady(), "the new session completes on its second success");
+        f.rt(pose(-97, 40, 16), 16, 4_000_000_000L);
+        check(f.pp.writes == 6, "later acceptable frames stay paused while RT is held");
+        f.frame(pose(-97, 40, 16), 16, false, false, 4_020_000_000L);
+        check(f.pp.writes == 7, "release makes the next eligible frame available to idle calibration");
+
         Fixture cold = new Fixture();
         cold.rt(FIXED, 1, 0);
-        check(!cold.vision.hasValidAimingTarget() && cold.pp.writes == 0,
-                "RT cannot initialize an unknown field pose even with visible tags");
+        check(cold.vision.hasValidAimingTarget() && !cold.vision.isAimCalibrationReady() && cold.pp.writes == 1,
+                "the first acceptable RT frame initializes an unknown field pose and leaves one correction pending");
+        cold.rt(FIXED, 2, 20_000_000L);
+        check(cold.vision.isAimCalibrationReady() && cold.pp.writes == 2,
+                "the second acceptable RT frame completes calibration after initialization");
+    }
+
+    private static void rtUsesIdleJumpGate() throws Exception {
+        Fixture f = new Fixture();
+        f.initialize();
+        f.rt(null, 0, 20_000_000L);
+        check(f.vision.hasValidAimingTarget() && !f.vision.isAimCalibrationReady()
+                        && !f.vision.shouldPauseForAimCalibration() && f.pp.writes == 1,
+                "RT can aim from OD while waiting for a usable visual frame");
+        Pose2D jumped = pose(200, 40, 30);
+        f.rt(jumped, 2, 40_000_000L);
+        f.rt(jumped, 2, 60_000_000L);
+        f.rt(jumped, 3, 80_000_000L);
+        check(f.pp.writes == 1 && !f.vision.isAimCalibrationReady()
+                        && f.vision.shouldPauseForAimCalibration(),
+                "a duplicate cannot advance the idle jump-rejection count during RT");
+        f.rt(jumped, 4, 100_000_000L);
+        check(f.pp.writes == 2 && !f.vision.isAimCalibrationReady(),
+                "the idle jump override counts as one successful correction");
+        near(f.drive.getPose().getX(DistanceUnit.CM), 200, "RT jump override writes the accepted pose");
+        f.rt(jumped, 5, 120_000_000L);
+        check(f.pp.writes == 3 && f.vision.isAimCalibrationReady(),
+                "the next accepted frame completes the two corrections");
     }
 
     private static void failedVisionWritebackRetriesImmediately() throws Exception {
-        Fixture f = new Fixture();
-        f.pp.failAfterPoseWrite = true;
-        f.frame(FIXED, 1, false, false, 0);
-        check(!f.drive.isFieldPoseInitialized() && f.drive.getPinpointBadReadCount() == 1,
-                "a failed post-write read rejects and records the attempted calibration");
-        check(f.drive.getLastPinpointReadFailure().contains("after vision write"),
-                "diagnostics identify the post-calibration read phase");
-        near(f.vision.getCalibrationCooldownRemainingSeconds(), 0,
-                "a failed post-write read does not start a cooldown");
-        f.pp.failAfterPoseWrite = false;
-        f.pp.status = DeviceStatus.READY;
-        f.frame(FIXED, 2, false, false, 20_000_000L);
-        check(f.vision.hasValidAimingTarget() && f.pp.writes == 2,
-                "the next verified frame retries a failed calibration immediately");
-        near(f.vision.getCalibrationCooldownRemainingSeconds(), 0,
-                "a successful retry also leaves no cooldown");
-        f.frame(FIXED, 3, false, false, 40_000_000L);
-        check(f.pp.writes == 3, "the frame after a recovered calibration immediately calibrates again");
+        for (boolean rt : new boolean[]{false, true}) {
+            Fixture f = new Fixture();
+            f.pp.failAfterPoseWrite = true;
+            f.frame(FIXED, 1, rt, false, 0);
+            check(!f.drive.isFieldPoseInitialized() && f.drive.getPinpointBadReadCount() == 1,
+                    "a failed post-write read rejects and records the attempted calibration");
+            check(f.drive.getLastPinpointReadFailure().contains("after vision write"),
+                    "diagnostics identify the post-calibration read phase");
+            if (rt) check(!f.vision.isAimCalibrationReady(), "failed writeback leaves RT calibration pending");
+            near(f.vision.getCalibrationCooldownRemainingSeconds(), 0,
+                    "a failed post-write read does not start a cooldown");
+            f.pp.failAfterPoseWrite = false;
+            f.pp.status = DeviceStatus.READY;
+            f.frame(FIXED, 2, rt, false, 20_000_000L);
+            check(f.vision.hasValidAimingTarget() && f.pp.writes == 2,
+                    "the next verified frame retries a failed calibration immediately");
+            if (rt) check(!f.vision.isAimCalibrationReady(), "a failed write does not count toward two successes");
+            near(f.vision.getCalibrationCooldownRemainingSeconds(), 0,
+                    "a successful retry also leaves no cooldown");
+            f.frame(FIXED, 3, rt, false, 40_000_000L);
+            check(f.pp.writes == 3 && f.vision.isAimCalibrationReady(),
+                    "two verified writes complete RT calibration after the failed attempt");
+            f.frame(FIXED, 4, rt, false, 60_000_000L);
+            check(f.pp.writes == (rt ? 3 : 4), "RT stops after two successes while idle stays continuous");
+        }
     }
 
     private static void rtFaultAndStop() throws Exception {
         Fixture f = new Fixture();
         f.initialize();
-        f.rt(FIXED, 2, 40_000_000L);
-        f.frame(FIXED, 3, true, true, 60_000_000L);
-        f.rt(FIXED, 4, 80_000_000L);
+        f.frame(FIXED, 2, true, true, 40_000_000L);
+        f.rt(FIXED, 3, 60_000_000L);
         check(!f.vision.isAimCalibrationReady() && !f.vision.hasValidAimingTarget(),
                 "B stays latched until RT release");
-        check(f.pp.writes == 1, "held RT and latched B never calibrate");
-        f.frame(FIXED, 5, false, false, 100_000_000L);
+        check(f.pp.writes == 1, "B prevents the pending RT correction");
+        f.frame(FIXED, 4, false, false, 80_000_000L);
+        check(f.pp.writes == 2, "RT release resumes calibration after B stop");
+        f.rt(FIXED, 5, 100_000_000L);
         f.rt(FIXED, 6, 120_000_000L);
-        check(f.vision.hasValidAimingTarget() && f.pp.writes == 2,
-                "RT release resumes calibration before the next OD aiming session");
+        check(f.vision.hasValidAimingTarget() && f.vision.isAimCalibrationReady() && f.pp.writes == 4,
+                "the next RT session completes two calibrations after B stop");
         f.pp.position = pose(110, 42, 10);
         f.pp.status = DeviceStatus.FAULT_BAD_READ;
         f.rt(FIXED, 7, 140_000_000L);
-        check(!f.vision.hasValidAimingTarget() && f.pp.writes == 2,
-                "bad reads suspend OD aiming without recalibrating during RT");
+        check(!f.vision.hasValidAimingTarget() && f.pp.writes == 4,
+                "bad reads suspend OD aiming after the RT correction");
         check(!f.drive.isFieldPoseInitialized()
                         && Double.isNaN(f.drive.getPose().getX(DistanceUnit.CM)),
                 "bad reads cannot expose a cached field pose for control");
-        check(f.vision.getCalibrationStatus().contains("RT held"),
-                "RT keeps vision correction paused during a temporary bad read");
+        check(f.vision.getCalibrationStatus().contains("RT calibration complete"),
+                "a temporary bad read does not rearm RT calibration");
         f.pp.status = DeviceStatus.READY;
         f.rt(FIXED, 8, 160_000_000L);
-        check(f.vision.hasValidAimingTarget() && f.pp.writes == 2,
+        check(f.vision.hasValidAimingTarget() && f.pp.writes == 4,
                 "a valid recovered Pinpoint resumes OD aiming without a vision rewrite");
         near(f.drive.getPose().getX(DistanceUnit.CM), 110, "recovery preserves the current OD position");
         near(f.drive.getDriverHeadingRadians(), Math.toRadians(10),
                 "a bad read cannot reset the headless driving reference");
         check(f.pp.offsetReads == 2, "recovery verifies both device offsets once");
         f.frame(pose(110, 42, 10), 9, false, false, 180_000_000L);
-        check(f.vision.hasValidAimingTarget() && f.pp.writes == 3 && f.pp.offsetReads == 2,
+        check(f.vision.hasValidAimingTarget() && f.pp.writes == 5 && f.pp.offsetReads == 2,
                 "RT release recalibrates immediately without rereading verified device offsets");
         f.pp.status = DeviceStatus.CALIBRATING;
         f.rt(FIXED, 10, 200_000_000L);
+        check(!f.vision.isAimCalibrationReady() && f.pp.writes == 5,
+                "an unavailable Pinpoint cannot complete a new RT correction");
         f.pp.status = DeviceStatus.READY;
         f.frame(FIXED, 11, false, false, 220_000_000L);
-        check(f.vision.hasValidAimingTarget() && f.pp.writes == 4,
+        check(f.vision.hasValidAimingTarget() && f.pp.writes == 6,
                 "idle vision immediately restores field registration after verified odometry recovery");
         f.rt(FIXED, 12, 240_000_000L);
-        check(f.pp.writes == 4, "RT still pauses calibration after recovery");
-        f.frame(FIXED, 13, false, false, 260_000_000L);
-        check(f.vision.hasValidAimingTarget() && f.pp.writes == 5,
+        f.rt(FIXED, 13, 260_000_000L);
+        check(f.pp.writes == 8 && f.vision.isAimCalibrationReady(), "RT can calibrate twice after recovery");
+        f.frame(FIXED, 14, false, false, 280_000_000L);
+        check(f.vision.hasValidAimingTarget() && f.pp.writes == 9,
                 "RT release resumes calibration immediately after recovery");
     }
 
@@ -330,7 +385,7 @@ public class RtCalibrationCheck {
                 "a failed recovery offset read keeps aiming suspended");
         retry.pp.status = DeviceStatus.READY;
         retry.pp.failOffsetRead = false;
-        retry.rt(FIXED, 3, 60_000_000L);
+        retry.rt(null, 0, 60_000_000L);
         check(retry.vision.hasValidAimingTarget() && retry.pp.writes == 1,
                 "the next valid configuration read can recover without vision calibration");
     }
@@ -438,24 +493,45 @@ public class RtCalibrationCheck {
         ShootAssistCommand command = new ShootAssistCommand(
                 f.drive, shooter, intake, transit, f.vision, aim, new GamepadEx(gamepad));
         command.initialize();
-        f.rt(null, 0, 20_000_000L);
+        f.pp.position = pose(100, 40, heading + 10);
+        f.rt(aligned, 2, 20_000_000L);
         command.execute();
-        check(!aim.isLocked() && transit.getState() == Transit.TransitState.CLOSE,
-                "OD aiming still requires the existing stable lock interval");
+        near(f.drive.turn, 0, "automatic turn waits for an eligible frame when usable vision is present");
+        f.rt(null, 0, 25_000_000L);
+        command.execute();
+        check(Math.abs(f.drive.turn) > 0 && !command.canFire(),
+                "OD can turn toward the target while the camera has no usable frame");
+
+        f.pp.position = aligned;
+        f.rt(null, 0, 30_000_000L);
+        command.execute();
         set(aim, AutoAimController.class, "withinToleranceSinceNanos", System.nanoTime() - 1_000_000_000L);
+        command.execute();
+        check(aim.isLocked() && !command.canPrepareToFire() && transit.getState() == Transit.TransitState.CLOSE,
+                "an OD lock cannot release automatic feed before the RT correction");
+        f.rt(aligned, 3, 40_000_000L);
+        command.execute();
+        check(!f.vision.isAimCalibrationReady() && !command.canPrepareToFire() && !command.canFire(),
+                "one successful correction leaves automatic feed waiting");
+        f.rt(aligned, 4, 60_000_000L);
+        command.execute();
+        check(f.vision.isAimCalibrationReady() && !aim.isLocked() && !command.canFire(),
+                "the second successful correction starts the aim lock interval");
+        set(aim, AutoAimController.class, "withinToleranceSinceNanos", System.nanoTime() - 1_000_000_000L);
+        f.rt(null, 0, 80_000_000L);
         command.execute();
         check(aim.isLocked() && command.canPrepareToFire() && command.canFire()
                         && transit.getState() == Transit.TransitState.OPEN,
-                "stable OD aim can feed without a visible tag");
-        f.rt(pose(-200, -200, 90), 3, 60_000_000L);
+                "calibrated OD aim can feed after tag loss");
+        f.rt(pose(-200, -200, 90), 5, 100_000_000L);
         command.execute();
-        check(aim.isLocked() && command.canFire() && f.pp.writes == 2,
-                "visible vision cannot alter a locked OD shot while RT is held");
-        f.rt(null, 0, 80_000_000L);
+        check(aim.isLocked() && command.canFire() && f.pp.writes == 4,
+                "later visual frames cannot alter a calibrated OD shot while RT is held");
+        f.rt(null, 0, 110_000_000L);
         command.execute();
         check(aim.isLocked() && command.canFire(), "tag loss preserves valid OD aim and the existing feed sequence");
         f.pp.status = DeviceStatus.FAULT_BAD_READ;
-        f.rt(aligned, 4, 100_000_000L);
+        f.rt(aligned, 6, 120_000_000L);
         command.execute();
         near(motorPower[0], 0, "invalid OD explicitly stops the committed feeder");
         check(!aim.isLocked() && transit.getState() == Transit.TransitState.CLOSE,
@@ -519,24 +595,29 @@ public class RtCalibrationCheck {
                 "one real SDK-style idle frame initializes the field pose");
         set(f.vision, Vision.class, "lastPhysicalFrameSeenNanos", System.nanoTime() - 300_000_000L);
         f.vision.update();
-        f.vision.updateAimTarget(f.drive, false, false, 20_000_000L);
+        f.vision.updateAimTarget(f.drive, false, true, 20_000_000L);
         check(!f.vision.getCorrectedRobotFieldPose().isPresent() && f.vision.getPoseStatus().contains("frozen"),
                 "a frozen camera is invalid even with fresh HTTP reception");
         frame.timestamp = 2;
         frame.age = VisionConstants.maxResultAgeMs + 1;
         f.vision.update();
-        f.vision.updateAimTarget(f.drive, false, false, 40_000_000L);
-        check(f.pp.writes == 1, "stale reception cannot calibrate odometry");
+        f.vision.updateAimTarget(f.drive, false, true, 40_000_000L);
+        check(f.pp.writes == 1 && !f.vision.isAimCalibrationReady(), "stale reception cannot complete RT calibration");
         frame.age = 0;
         frame.pipeline = 1;
         f.vision.update();
-        f.vision.updateAimTarget(f.drive, false, false, 60_000_000L);
-        check(f.pp.writes == 1, "the wrong alliance pipeline cannot calibrate odometry");
+        f.vision.updateAimTarget(f.drive, false, true, 60_000_000L);
+        check(f.pp.writes == 1 && !f.vision.isAimCalibrationReady(), "wrong pipeline cannot complete RT calibration");
         frame.pipeline = 0;
         f.vision.update();
-        f.vision.updateAimTarget(f.drive, false, false, 80_000_000L);
-        check(f.pp.writes == 2 && f.vision.getCorrectedRobotFieldPose().isPresent(),
-                "camera recovery immediately resumes vision calibration");
+        f.vision.updateAimTarget(f.drive, false, true, 80_000_000L);
+        check(f.pp.writes == 2 && !f.vision.isAimCalibrationReady(),
+                "the first fresh frame on the correct pipeline counts once");
+        frame.timestamp = 3;
+        f.vision.update();
+        f.vision.updateAimTarget(f.drive, false, true, 100_000_000L);
+        check(f.pp.writes == 3 && f.vision.isAimCalibrationReady(),
+                "two fresh frames on the correct pipeline complete the pending RT calibration");
     }
 
     private static void mixedAllianceTagsStayUsable() throws Exception {
@@ -563,24 +644,29 @@ public class RtCalibrationCheck {
             frame.timestamp = 2;
             f.vision.update();
             f.vision.updateAimTarget(f.drive, false, true, 20_000_000L);
-            check(f.vision.hasValidAimingTarget() && f.pp.writes == 1,
-                    "mixed-alliance tags do not change RT odometry aiming or calibration pause");
+            check(f.vision.hasValidAimingTarget() && !f.vision.isAimCalibrationReady() && f.pp.writes == 2,
+                    "mixed-alliance tags permit the first RT correction");
+            frame.timestamp = 3;
+            f.vision.update();
+            f.vision.updateAimTarget(f.drive, false, true, 40_000_000L);
+            check(f.vision.isAimCalibrationReady() && f.pp.writes == 3,
+                    "another fresh mixed-alliance frame completes RT calibration");
             check(f.vision.getSelectedCluster().get().isForAlliance(alliance),
                     "mixed detections still aim at the driver's own CELL");
             frame.tag.id = frame.otherTag.id;
             frame.otherTag = null;
-            frame.timestamp = 3;
+            frame.timestamp = 4;
             f.vision.update();
-            f.vision.updateAimTarget(f.drive, false, false, 40_000_000L);
-            check(f.pp.writes == 2 && f.vision.getUsableTagCount() == 1,
+            f.vision.updateAimTarget(f.drive, false, false, 60_000_000L);
+            check(f.pp.writes == 4 && f.vision.getUsableTagCount() == 1,
                     "an opposing HIVE tag remains usable for continuous idle calibration");
             check(f.vision.getSelectedCluster().get().isForAlliance(alliance),
                     "opposing-only localization cannot select the opposing CELL");
             frame.tag.id = 29;
-            frame.timestamp = 4;
+            frame.timestamp = 5;
             f.vision.update();
-            f.vision.updateAimTarget(f.drive, false, false, 60_000_000L);
-            check(f.pp.writes == 2 && !f.vision.getCorrectedRobotFieldPose().isPresent(),
+            f.vision.updateAimTarget(f.drive, false, false, 80_000_000L);
+            check(f.pp.writes == 4 && !f.vision.getCorrectedRobotFieldPose().isPresent(),
                     "unknown tag IDs still cannot establish HIVE geometry");
         }
     }
@@ -588,7 +674,8 @@ public class RtCalibrationCheck {
     public static void main(String[] args) throws Exception {
         continuousIdleCalibration();
         failedVisionWritebackRetriesImmediately();
-        rtUsesOnlyOdometry();
+        rtCalibratesTwiceThenUsesOdometry();
+        rtUsesIdleJumpGate();
         rtFaultAndStop();
         recoveryChecksDeviceOffsets();
         pinpointBadReadDiagnostics();

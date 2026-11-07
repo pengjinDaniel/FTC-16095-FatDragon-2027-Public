@@ -103,8 +103,10 @@ public abstract class CoordinateAimTestBase extends OpMode {
                 forward = positionHold.getForwardPower();
                 strafe = positionHold.getStrafePower();
             }
+            if (vision.wasCorrectionApplied()) autoAim.reset();
             turnPower = autoAim.calculateTurnPower(
-                    vision.hasValidAimingTarget(), vision.getYawErrorDegrees());
+                    vision.hasValidAimingTarget() && !vision.shouldPauseForAimCalibration(),
+                    vision.getYawErrorDegrees());
             if (manualTranslation) {
                 drive.moveFieldCentric(forward, strafe, turnPower);
             } else {
@@ -143,7 +145,7 @@ public abstract class CoordinateAimTestBase extends OpMode {
         String controlMode = !started ? "INIT" : stopLatched ? "STOPPED"
                 : !aimRequested ? "MANUAL" : vision.hasValidAimingTarget() ? "ODOMETRY_AIM" : "WAITING_FOR_FIELD_POSE";
 
-        telemetry.addLine("RT: Pinpoint aim with vision calibration paused"
+        telemetry.addLine("RT: two vision corrections, then Pinpoint aim"
                 + " | Release RT: continuous vision correction"
                 + " | B: stop | L3: reset forward");
         telemetry.addData("Control Mode", controlMode);

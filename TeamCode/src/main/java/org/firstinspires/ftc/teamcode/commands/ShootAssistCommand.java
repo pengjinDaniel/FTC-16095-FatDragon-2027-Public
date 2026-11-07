@@ -141,8 +141,9 @@ public class ShootAssistCommand extends CommandBase {
         boolean validAimingTarget = vision.hasValidAimingTarget();
         double autoAimTurn = 0.0;
         if (autoAimEnabled) {
+            if (vision.wasCorrectionApplied()) autoAim.reset();
             autoAimTurn = autoAim.calculateTurnPower(
-                    validAimingTarget, vision.getYawErrorDegrees());
+                    validAimingTarget && !vision.shouldPauseForAimCalibration(), vision.getYawErrorDegrees());
         }
 
         double distanceCm = validAimingTarget ? DistanceUnit.INCH.toCm(
