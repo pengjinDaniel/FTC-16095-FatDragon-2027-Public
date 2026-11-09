@@ -45,9 +45,32 @@ public class Constants {
         c.yPodDirection.set(DriveConstants.pinpointStrafePodDirection);
     });
 
-    // Paste the entire Foresight Tuner Java export here, replacing this declaration.
-    // Its Controller, Matrix, and Vector2D imports are already included above.
-    public static ForesightConfig foresightConfig = null;
+    // FTC1 measurements exported by the Foresight Tuner.
+    public static ForesightConfig foresightConfig = new ForesightConfig(
+            c -> {
+                Controller primaryTranslationalForward = Controller.proportional(0.29362974330914304);
+                Controller secondaryTranslationalForward = Controller.proportional(0.10848834422148654);
+                Controller primaryTranslationalLateral = Controller.proportional(0.4018130159224158);
+                Controller secondaryTranslationalLateral = Controller.proportional(0.14845917274180762);
+
+                c.forwardTranslational.set(Controller.piecewise(secondaryTranslationalForward).put(2.5, primaryTranslationalForward));
+                c.strafeTranslational.set(Controller.piecewise(secondaryTranslationalLateral).put(2.5, primaryTranslationalLateral));
+
+                c.coast.set(Controller.proportionalFeedforward(0.01367301191849275));
+                c.brake.set(Controller.proportionalFeedforward(0.011622060130718837));
+
+                c.headingFeedback.set(Controller.proportional(4.734866377156585));
+                c.headingBrakeCoefficients.set(Vector2D.cartesian(0.05806231553416445, 0.005340939042939729));
+
+                c.linearBrakeCoefficients.set(Matrix.diag(0.11655073581304821, 0.04934958786379315));
+                c.quadraticBrakeCoefficients.set(Matrix.diag(0.0013526590539923165, 0.002103772477380755));
+
+                c.maxAchievableForwardVelocity.set(81.79608478313465);
+                c.maxAchievableStrafeVelocity.set(64.48601849280288);
+                c.naturalForwardDeceleration.set(78.37278279390627);
+                c.naturalStrafeDeceleration.set(73.14837745654077);
+            }
+    );
 
     public static Foresight createAlgorithm() {
         if (foresightConfig == null) {

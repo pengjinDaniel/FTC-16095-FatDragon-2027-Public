@@ -2,6 +2,7 @@ package org.firstinspires.ftc.teamcode.opmodes.autos;
 
 import com.arcrobotics.ftclib.command.Command;
 import com.arcrobotics.ftclib.command.CommandScheduler;
+import com.pedropathing.algorithm.ForesightConfig;
 import com.pedropathing.api.PoseFactory;
 import com.pedropathing.drivetrain.DrivePowers;
 import com.pedropathing.drivetrain.Drivetrain;
@@ -267,10 +268,16 @@ public class TestAutoCheck {
 
     public static void main(String[] args) throws Exception {
         checkHive();
+        check(Constants.createAlgorithm() != null, "FTC1 calibration creates a Foresight algorithm");
+        ForesightConfig calibratedConfig = Constants.foresightConfig;
         boolean missingConfig = false;
-        try { Constants.createAlgorithm(); }
-        catch (IllegalStateException expected) {
+        try {
+            Constants.foresightConfig = null;
+            Constants.createAlgorithm();
+        } catch (IllegalStateException expected) {
             missingConfig = expected.getMessage().contains("Foresight Tuner");
+        } finally {
+            Constants.foresightConfig = calibratedConfig;
         }
         check(missingConfig, "unmeasured Foresight configuration has an actionable error");
 
