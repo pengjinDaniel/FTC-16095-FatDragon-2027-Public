@@ -5,19 +5,53 @@ import hashlib
 import ipaddress
 import os
 import pathlib
-import pty
 import re
 import select
 import shlex
+import shutil
 import subprocess
 import sys
 import time
 
+if os.name == 'nt':
+    pty = None
+else:
+    import pty
+
 ROOT = pathlib.Path(__file__).resolve().parent
-ADB = pathlib.Path.home() / 'Developer/Android-FRC/android-sdk/platform-tools/adb'
+ADB = None
 APK = ROOT / 'TeamCode/build/outputs/apk/debug/TeamCode-debug.apk'
 PACKAGE = 'com.qualcomm.ftcrobotcontroller'
 STAGE = '本地文件检查'
+
+
+def find_adb():
+    on_path = shutil.which('adb')
+    if on_path:
+        return pathlib.Path(on_path)
+
+    sdk_dirs = [pathlib.Path(value) for name in ('ANDROID_HOME', 'ANDROID_SDK_ROOT')
+                if (value := os.environ.get(name))]
+    properties = ROOT / 'local.properties'
+    if properties.is_file():
+        for line in properties.read_text(encoding='utf-8').splitlines():
+            key, separator, value = line.partition('=')
+            if separator and key.strip() == 'sdk.dir' and value.strip():
+                sdk_dirs.append(pathlib.Path(re.sub(r'\\([\\:= ])', r'\1', value.strip())))
+                break
+
+    home = pathlib.Path.home()
+    if os.name == 'nt':
+        sdk_dirs.append(pathlib.Path(os.environ.get('LOCALAPPDATA') or home / 'AppData/Local') / 'Android/Sdk')
+    else:
+        sdk_dirs.extend((home / 'Library/Android/sdk', home / 'Android/Sdk'))
+    executable = 'adb.exe' if os.name == 'nt' else 'adb'
+    for sdk_dir in sdk_dirs:
+        candidate = sdk_dir.expanduser() / 'platform-tools' / executable
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return candidate
+    raise ValueError('找不到 ADB。请安装 Android SDK Platform-Tools，并将 adb 加入 PATH，'
+                     '或在项目的 local.properties 中配置 sdk.dir。')
 
 
 def stage(message):
@@ -33,7 +67,17 @@ def run(*args, timeout=30):
 
 
 def live_run(*args, timeout, label):
-    """A local PTY preserves adb push's progress display; always reap the client."""
+    """Preserve ADB progress on Unix and capture command results on Windows."""
+    if pty is None:
+        print(f'[{label}] 正在执行，完成后显示结果。', flush=True)
+        result = subprocess.run([str(ADB), *args], stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                text=True, errors='replace', timeout=timeout)
+        if result.stdout:
+            print(result.stdout, end='', flush=True)
+        result.check_returncode()
+        return result.stdout.strip()
+
     master, slave = pty.openpty()
     process = None
     chunks = []
@@ -176,7 +220,7 @@ def installed_matches(serial, digest):
 
 
 def install_apk(serial, digest):
-    stage('2/4：检查并传输 APK（显示百分比，最多等待 10 分钟）')
+    stage('2/4：检查并传输 APK（最多等待 10 分钟）')
     print('先核对上次是否已经装好同一份 APK……', flush=True)
     if installed_matches(serial, digest) is True:
         print('机器人已经安装了这份 APK，文件 SHA256 一致，无需重复上传。')
@@ -236,12 +280,15 @@ def ready_devices():
 
 
 def main():
+    global ADB
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--check', action='store_true', help='Check local files only; do not connect or install')
     args = parser.parse_args()
-    if not ADB.is_file() or not APK.is_file():
-        raise ValueError('缺少 ADB 或 APK；请先在联网时完成环境配置和编译。')
-    print('上传工具 v2.1：自动重连 / 分步传输与安装')
+    if not APK.is_file():
+        raise ValueError('找不到 TeamCode 调试 APK。请先构建 :TeamCode:assembleDebug。')
+    if ADB is None:
+        ADB = find_adb()
+    print('上传工具 v2.2：自动重连 / 分步传输与安装')
     print('当前工程：', ROOT.name)
     print('APK：', APK)
     digest = hashlib.sha256(APK.read_bytes()).hexdigest()
@@ -285,7 +332,6 @@ def main():
         return
     install_apk(serial, digest)
     print('\n上传完成。回到控制手机查看程序列表。没有启动任何机器人程序。')
-    print('程序入口：Blue / Red。松开 R2：校准成功后等 150ms，失败持续尝试；按住 R2 暂停校准。')
 
 
 if __name__ == '__main__':

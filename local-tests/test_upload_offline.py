@@ -2,6 +2,7 @@
 import contextlib
 import importlib.util
 import io
+import os
 import pathlib
 import subprocess
 import sys
@@ -170,27 +171,47 @@ class UploadChecks(unittest.TestCase):
             self.assertIsNone(upload.installed_matches(SERIAL, DIGEST))
 
     def test_check_mode_never_calls_adb(self):
-        with patch.object(upload, 'run', side_effect=AssertionError('must not run adb')), \
+        with patch.object(upload, 'ADB', None), \
+                patch.object(upload, 'APK', pathlib.Path(__file__)), \
+                patch.object(upload, 'find_adb', return_value=pathlib.Path('adb')), \
+                patch.object(upload, 'run', side_effect=AssertionError('must not run adb')), \
                 patch.object(upload, 'live_run', side_effect=AssertionError('must not run adb')), \
                 patch.object(sys, 'argv', ['upload-offline.py', '--check']):
             upload.main()
         self.assertIn('未连接、未上传', self.output.getvalue())
 
+    def test_adb_discovery_uses_path_or_project_sdk(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = pathlib.Path(folder)
+            sdk = root / 'custom sdk'
+            adb = sdk / 'platform-tools' / ('adb.exe' if os.name == 'nt' else 'adb')
+            adb.parent.mkdir(parents=True)
+            adb.touch(mode=0o755)
+            value = str(sdk).replace('\\', '\\\\').replace(':', '\\:').replace(' ', '\\ ')
+            (root / 'local.properties').write_text('sdk.dir=' + value, encoding='utf-8')
+            with patch.object(upload, 'ROOT', root), \
+                    patch.dict(os.environ, {'ANDROID_HOME': '', 'ANDROID_SDK_ROOT': ''}), \
+                    patch.object(upload.shutil, 'which', return_value=None):
+                self.assertEqual(adb, upload.find_adb())
+            with patch.object(upload.shutil, 'which', return_value=sys.executable):
+                self.assertEqual(pathlib.Path(sys.executable), upload.find_adb())
+
     def test_live_output_exit_status_and_timeout_use_fake_process_only(self):
         with tempfile.TemporaryDirectory() as folder:
-            fake = pathlib.Path(folder) / 'fake-adb'
-            fake.write_text('#!' + sys.executable + '\n'
-                            'import sys, time\n'
+            fake = pathlib.Path(folder) / 'fake-adb.py'
+            fake.write_text('import sys, time\n'
                             'if sys.argv[1] == "slow": time.sleep(10)\n'
                             'print("[100%] Fake progress", flush=True)\n'
                             'if sys.argv[1] == "fail": sys.exit(2)\n')
-            fake.chmod(0o755)
-            with patch.object(upload, 'ADB', fake):
-                self.assertIn('Fake progress', upload.live_run('ok', timeout=2, label='fake'))
-                with self.assertRaises(subprocess.CalledProcessError):
-                    upload.live_run('fail', timeout=2, label='fake')
-                with self.assertRaises(subprocess.TimeoutExpired):
-                    upload.live_run('slow', timeout=0.15, label='fake')
+            for backend in (upload.pty, None):
+                with self.subTest(pty=backend is not None), \
+                        patch.object(upload, 'ADB', sys.executable), \
+                        patch.object(upload, 'pty', backend):
+                    self.assertIn('Fake progress', upload.live_run(str(fake), 'ok', timeout=2, label='fake'))
+                    with self.assertRaises(subprocess.CalledProcessError):
+                        upload.live_run(str(fake), 'fail', timeout=2, label='fake')
+                    with self.assertRaises(subprocess.TimeoutExpired):
+                        upload.live_run(str(fake), 'slow', timeout=0.15, label='fake')
 
 
 if __name__ == '__main__':
