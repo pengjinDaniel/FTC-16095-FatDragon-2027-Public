@@ -33,7 +33,7 @@ public class DriveConstants {
     public static double positionHoldKp = 0.12;
     public static double positionHoldKi = 0.0;
     public static double positionHoldKd = 0.007;
-    public static double positionHoldMaxPower = 0.6;
+    public static double positionHoldMaxPower = 0.8;
     public static double positionLockEnterToleranceInches = 0.75;
     public static double positionLockExitToleranceInches = 0.75;
     public static double positionLockMaxSpeedInchesPerSecond = 2.0;
@@ -51,5 +51,7 @@ public class DriveConstants {
     public static volatile double autoAimAcquisitionTurnPower = 0.65;
     public static volatile double aimLockToleranceDegrees = 2.0;
     public static volatile double aimUnlockToleranceDegrees = 3.0;
-    public static volatile double aimLockStableTimeSeconds = 0.15;
+    public static volatile double aimLockStableTimeSeconds = 0.1;
+    // Initial estimate of the time from feed release to the ball clearing the flywheel.
+    public static volatile double autoAimShotLookaheadSeconds = 0.1;
 }

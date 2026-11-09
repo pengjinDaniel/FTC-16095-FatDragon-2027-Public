@@ -28,22 +28,22 @@ public class ShooterConstants {
     // Measure horizontally from robot center to the current CELL's opening center, in cm.
     // Remeasure distances previously calibrated to the four-AprilTag centroid.
     // Velocity values are encoder ticks/s; pitch values are servo positions, not angles.
-    public static double centerDistanceCm = 61.1;
-    public static double centerVelocityTicksPerSecond = 1520.0;
-    public static double centerPitchPosition = 0.52;
-    public static double wallDistanceCm = 152.5;
-    public static double wallVelocityTicksPerSecond = 1720.0;
-    public static double wallPitchPosition = 0.3;
+    public static double centerDistanceCm = 54.1;
+    public static double centerVelocityTicksPerSecond = 1495.0;
+    public static double centerPitchPosition = 0.54;
+    public static double wallDistanceCm = 154.0;
+    public static double wallVelocityTicksPerSecond = 1660.0;
+    public static double wallPitchPosition = 0.27;
 
     // Extra points: {distanceCm, velocityTicksPerSecond, pitchServoPosition}.
     // Interpolated starting values, not measurements; replace each row with measured data.
     // Points may be in any order, but distances must be unique (including center/wall).
     // Use an empty array to return to center/wall-only interpolation.
     public static double[][] additionalShotPoints = {
-            {96.3, 1580.0, 0.35},
-            {115.0, 1615.0, 0.32},
-            {77.7, 1550.0, 0.38},
-            {132.7, 1670, 0.32}
+            {89.5, 1530.0, 0.36},
+            {115.3, 1560.0, 0.34},
+            {76.4, 1510.0, 0.43},
+            {132.4, 1610, 0.29}
     };
 
     // Enables the selected shared PID configuration; verify its gains on the robot.
@@ -52,7 +52,7 @@ public class ShooterConstants {
     public static double kI = 0.0;
     public static double kD = 0.0;
     // Feedforward is power per tick/s; leave feedback headroom at the shot targets.
-    public static double kF = 0.00058;
+    public static double kF = 0.0006;
 
     // Fractional speed tolerances; fixed power uses a stable measured reference.
     public static double readyEnterTolerance = 0.06;

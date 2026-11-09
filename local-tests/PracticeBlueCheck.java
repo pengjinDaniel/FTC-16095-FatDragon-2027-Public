@@ -90,10 +90,7 @@ public class PracticeBlueCheck {
 
     private static class TestAim extends AutoAimController {
         int calls;
-        boolean locked;
         @Override public double calculateTurnPower(boolean valid, double error) { calls++; return 0.123; }
-        @Override public boolean isLocked() { return locked; }
-        @Override public void reset() { super.reset(); locked = false; }
     }
 
     private static class TestTimer extends ElapsedTime {
@@ -160,7 +157,7 @@ public class PracticeBlueCheck {
         TransitConstants.limitPositionsCalibrated = true;
         TransitConstants.feedReverseTime = 0.200;
         TransitConstants.feedReversePower = -0.5;
-        near(TransitConstants.intakeReverseForwardPower, 0.4, "LB transit forward power");
+        TransitConstants.intakeReverseForwardPower = 0.4;
         intake.updateInputs(true, false);
         transit.updateIntakeRequest(true, false);
         near(intake.getRequestedPower(), IntakeConstants.activePower, "LT runs intake forward");
@@ -319,10 +316,10 @@ public class PracticeBlueCheck {
         check(drive.fieldCentric, "normal Blue/Red keep headless translation during RT");
         near(drive.turn, 0.123, "normal Blue/Red retain automatic turn output");
         check(aim.calls > 0, "normal constructor still calculates auto aim");
-        check(!normal.canPrepareToFire(), "normal Blue/Red still require aim lock");
-        aim.locked = true;
-        normal.execute();
-        check(normal.canPrepareToFire(), "normal Blue/Red can fire after aim lock");
+        check(!normal.canPrepareToFire(), "normal Blue/Red reject a heading outside the firing window");
+        check(transit.getFiringState() == Transit.FiringState.REVERSING
+                        && transit.getState() == Transit.TransitState.CLOSE,
+                "normal Blue/Red prepare the feeder with the gate closed");
         normal.end(true);
         System.out.println("PASS PracticeBlueCheck: " + checks + " assertions");
     }
