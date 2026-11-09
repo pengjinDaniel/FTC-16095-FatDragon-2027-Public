@@ -92,6 +92,10 @@ public abstract class TeleOpBase extends CommandOpMode {
         ).whenActive(drive::resetDriverHeading);
 
         new Trigger(
+                () -> gamepadEx.getButton(GamepadKeys.Button.A)
+        ).whenActive(intake::toggleFlower);
+
+        new Trigger(
                 () -> gamepadEx.getTrigger(GamepadKeys.Trigger.RIGHT_TRIGGER)
                         > TeleOpConstants.triggerThreshold
         ).whileActiveContinuous(shootAssistCommand);
@@ -128,13 +132,13 @@ public abstract class TeleOpBase extends CommandOpMode {
                 && Double.isFinite(pose.getY(DistanceUnit.INCH))
                 && Double.isFinite(pose.getHeading(AngleUnit.DEGREES));
         boolean aligned = isAutoAimEnabled() && started && !stopLatched && aimRequested
-                && vision.hasValidAimingTarget() && vision.isAimCalibrationReady() && autoAim.isLocked();
+                && shootAssistCommand.isAimWindowReady();
         String aimState = !started ? "等待START" : stopLatched ? "已停止"
                 : !isAutoAimEnabled() ? "手动瞄准（右摇杆转向，R2射击）"
                 : !aimRequested ? "未启动（按R2瞄准）"
                 : !vision.isAimCalibrationReady() ? vision.getRtCalibrationStatus()
                 : !vision.hasValidAimingTarget() ? "无有效瞄准目标"
-                : aligned ? "已对准并稳定" : "未对准或尚未稳定";
+                : aligned ? "进入射击窗口" : "等待射击窗口";
         if (isAutoAimEnabled() && started && aimRequested && !stopLatched && vision.hasValidAimingTarget()) {
             aimState += String.format(java.util.Locale.US, "（误差 %.1f° / 放行 ±%.1f°）",
                     vision.getYawErrorDegrees(), DriveConstants.aimLockToleranceDegrees);
@@ -238,14 +242,15 @@ public abstract class TeleOpBase extends CommandOpMode {
         if (stopLatched) return "B已停止";
         if (!aimRequested) return "未按R2";
         if (gamepad1.right_bumper) return "正在排堵";
+        if (isAutoAimEnabled() && gamepad1.left_bumper) return "进球机构正在反转";
         if (!Shooter.areDistanceShotValuesValid()) return "两点射击参数未填完整或超出限值";
         if (isAutoAimEnabled() && !vision.isAimCalibrationReady())
             return vision.getRtCalibrationStatus();
         if (!vision.hasValidAimingTarget()) return "定位或瞄准目标无效";
         if (shootAssistCommand.getFiringState() == Transit.FiringState.REVERSING)
-            return "已放行，送球前反转中";
+            return isAutoAimEnabled() ? "正在反转备球（挡板关闭）" : "已放行，送球前反转中";
         if (!shooter.isReady()) return "射手转速尚未稳定";
-        if (isAutoAimEnabled() && !autoAim.isLocked()) return "尚未对准";
+        if (isAutoAimEnabled() && !shootAssistCommand.isAimWindowReady()) return "等待射击窗口";
         if (!shooter.isPitchReady()) return "射手角度未就绪";
         if (!transit.areLimitPositionsCalibrated()) return "挡板位置未校准";
         return "等待射击状态就绪";

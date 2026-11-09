@@ -8,11 +8,12 @@ import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 import org.firstinspires.ftc.teamcode.subsystems.drive.AutoAimController;
 import org.firstinspires.ftc.teamcode.subsystems.drive.Drive;
 import org.firstinspires.ftc.teamcode.subsystems.drive.DriveConstants;
-import org.firstinspires.ftc.teamcode.subsystems.drive.PositionHoldController;
 import org.firstinspires.ftc.teamcode.subsystems.intake.Intake;
 import org.firstinspires.ftc.teamcode.subsystems.shooter.Shooter;
+import org.firstinspires.ftc.teamcode.subsystems.shooter.ShooterConstants;
 import org.firstinspires.ftc.teamcode.subsystems.transit.Transit;
 import org.firstinspires.ftc.teamcode.subsystems.transit.Transit.FiringState;
+import org.firstinspires.ftc.teamcode.subsystems.vision.CellCluster;
 import org.firstinspires.ftc.teamcode.subsystems.vision.Vision;
 
 public class ShootAssistCommand extends CommandBase {
@@ -22,12 +23,16 @@ public class ShootAssistCommand extends CommandBase {
     private final Transit transit;
     private final Vision vision;
     private final AutoAimController autoAim;
-    private final PositionHoldController positionHold = new PositionHoldController();
     private final GamepadEx gamepadEx;
     private final boolean autoAimEnabled;
 
     private boolean canPrepareToFire;
     private boolean manualTranslation;
+    private boolean fedSinceReset;
+    private boolean aimWindowReady;
+    private CellCluster previousAimCluster;
+    private double previousYawErrorDegrees = Double.NaN;
+    private long previousAimSampleNanos;
 
     public ShootAssistCommand(
             Drive drive,
@@ -64,9 +69,8 @@ public class ShootAssistCommand extends CommandBase {
 
     @Override
     public void initialize() {
-        shooter.stop();
+        if (!autoAimEnabled) shooter.stop();
         autoAim.reset();
-        positionHold.reset();
         manualTranslation = false;
         resetFiringSequence(FiringState.WAITING);
     }
@@ -76,27 +80,19 @@ public class ShootAssistCommand extends CommandBase {
         double forward = applyDeadband(gamepadEx.getLeftY());
         double strafe = applyDeadband(gamepadEx.getLeftX());
         manualTranslation = forward != 0.0 || strafe != 0.0;
-        if (!autoAimEnabled || !vision.isAimCalibrationReady() || manualTranslation) {
-            positionHold.reset();
-        } else {
-            positionHold.update(drive.getPose(), drive.isFieldPoseInitialized(),
-                    drive.getTranslationSpeedInchesPerSecond());
-            forward = positionHold.getForwardPower();
-            strafe = positionHold.getStrafePower();
-        }
 
         boolean intakeRequested = gamepadEx.getTrigger(GamepadKeys.Trigger.LEFT_TRIGGER)
                 > org.firstinspires.ftc.teamcode.opmodes.teleops.TeleOpConstants.triggerThreshold;
         boolean jamRequested = gamepadEx.getButton(GamepadKeys.Button.RIGHT_BUMPER);
+        boolean intakeReverseRequested = gamepadEx.getButton(GamepadKeys.Button.LEFT_BUMPER);
         intake.updateInputs(intakeRequested, jamRequested, true);
-        double turnPower = updateShootRequest(jamRequested);
-        if (gamepadEx.getButton(GamepadKeys.Button.LEFT_BUMPER) && !jamRequested) {
+        double turnPower = updateShootRequest(jamRequested, intakeReverseRequested);
+        if (intakeReverseRequested && !jamRequested) {
             transit.forwardForIntakeReverse();
         }
         if (autoAimEnabled && !manualTranslation) {
             drive.moveRobot(forward, strafe, turnPower);
         } else {
-            // Manual translation stays headless during RT; position hold already returns robot-space powers.
             drive.moveFieldCentric(forward, strafe,
                     autoAimEnabled ? turnPower : applyDeadband(gamepadEx.getRightX()));
         }
@@ -105,7 +101,6 @@ public class ShootAssistCommand extends CommandBase {
     @Override
     public void end(boolean interrupted) {
         autoAim.reset();
-        positionHold.reset();
         manualTranslation = false;
         resetFiringSequence(FiringState.IDLE);
         shooter.stop();
@@ -129,7 +124,11 @@ public class ShootAssistCommand extends CommandBase {
         return manualTranslation;
     }
 
-    private double updateShootRequest(boolean jamRequested) {
+    public boolean isAimWindowReady() {
+        return aimWindowReady;
+    }
+
+    private double updateShootRequest(boolean jamRequested, boolean intakeReverseRequested) {
         if (jamRequested) {
             shooter.stop();
             autoAim.reset();
@@ -139,34 +138,78 @@ public class ShootAssistCommand extends CommandBase {
         }
 
         boolean validAimingTarget = vision.hasValidAimingTarget();
+        double yawErrorDegrees = vision.getYawErrorDegrees();
+        boolean poseCorrected = autoAimEnabled && vision.wasCorrectionApplied();
         double autoAimTurn = 0.0;
         if (autoAimEnabled) {
-            if (vision.wasCorrectionApplied()) autoAim.reset();
+            if (poseCorrected) autoAim.reset();
             autoAimTurn = autoAim.calculateTurnPower(
-                    validAimingTarget && !vision.shouldPauseForAimCalibration(), vision.getYawErrorDegrees());
+                    validAimingTarget && !vision.shouldPauseForAimCalibration(), yawErrorDegrees);
         }
 
         double distanceCm = validAimingTarget ? DistanceUnit.INCH.toCm(
                 vision.getTargetHorizontalDistanceInches()) : Double.NaN;
         if (!shooter.setDistanceTarget(distanceCm)) {
-            // Invalid targeting also cancels an already committed feed.
             resetFiringSequence(FiringState.WAITING);
             return validAimingTarget ? autoAimTurn : 0.0;
         }
 
-        canPrepareToFire = (!autoAimEnabled || vision.isAimCalibrationReady())
-                && shooter.isReady()
-                && (!autoAimEnabled || autoAim.isLocked())
-                && shooter.isPitchReady();
-        transit.requestFeed(canPrepareToFire);
+        if (autoAimEnabled && intakeReverseRequested) {
+            resetFiringSequence(FiringState.WAITING);
+            return autoAimTurn;
+        }
 
-        return validAimingTarget ? autoAimTurn : 0.0;
+        canPrepareToFire = shooter.isReady() && shooter.isPitchReady();
+        if (autoAimEnabled) {
+            aimWindowReady = updateAimWindow(yawErrorDegrees, poseCorrected);
+            double targetVelocity = shooter.getTargetVelocity();
+            canPrepareToFire = canPrepareToFire && aimWindowReady
+                    && Math.abs(shooter.getRightVelocity() - targetVelocity)
+                    <= targetVelocity * ShooterConstants.readyExitTolerance;
+            transit.requestTrackedFeed(canPrepareToFire);
+            fedSinceReset |= canFire();
+        } else {
+            transit.requestFeed(canPrepareToFire);
+        }
+
+        return autoAimTurn;
+    }
+
+    private boolean updateAimWindow(double yawErrorDegrees, boolean poseCorrected) {
+        if (!vision.isAimCalibrationReady() || !Double.isFinite(yawErrorDegrees)) {
+            previousYawErrorDegrees = Double.NaN;
+            return false;
+        }
+
+        CellCluster cluster = vision.getSelectedCluster().orElse(null);
+        long now = System.nanoTime();
+        double elapsedSeconds = (now - previousAimSampleNanos) / 1_000_000_000.0;
+        double yawChange = Math.IEEEremainder(yawErrorDegrees - previousYawErrorDegrees, 360.0);
+        boolean comparable = !poseCorrected && cluster == previousAimCluster;
+        previousAimCluster = cluster;
+        previousYawErrorDegrees = yawErrorDegrees;
+        previousAimSampleNanos = now;
+
+        double lookaheadSeconds = DriveConstants.autoAimShotLookaheadSeconds;
+        double toleranceDegrees = DriveConstants.aimLockToleranceDegrees;
+        if (!comparable || elapsedSeconds <= 0.0 || !Double.isFinite(yawChange)
+                || !Double.isFinite(lookaheadSeconds) || lookaheadSeconds < 0.0
+                || !Double.isFinite(toleranceDegrees) || toleranceDegrees < 0.0) {
+            return false;
+        }
+        // The yaw-error rate includes the target bearing change during translation.
+        double predictedError = yawErrorDegrees + yawChange * lookaheadSeconds / elapsedSeconds;
+        return Math.abs(yawErrorDegrees) <= toleranceDegrees
+                && Math.abs(predictedError) <= toleranceDegrees;
     }
 
     private void resetFiringSequence(FiringState resetState) {
-        if (transit.getState() == Transit.TransitState.OPEN) {
+        if (fedSinceReset || transit.getState() == Transit.TransitState.OPEN) {
             intake.clearBallCount();
         }
+        fedSinceReset = false;
+        aimWindowReady = false;
+        previousYawErrorDegrees = Double.NaN;
         canPrepareToFire = false;
         transit.cancelFeeding();
         if (resetState != FiringState.IDLE) {

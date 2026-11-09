@@ -20,6 +20,7 @@ public class Transit extends SubsystemBase {
         IDLE,
         WAITING,
         REVERSING,
+        PREPARED,
         FEEDING
     }
 
@@ -61,33 +62,67 @@ public class Transit extends SubsystemBase {
     // Once the gate opens, only explicit cancellation ends the reverse/feed sequence.
     public void requestFeed(boolean readyToOpenLimit) {
         if (firingState != FiringState.REVERSING && firingState != FiringState.FEEDING) {
-            double reverseTime = TransitConstants.feedReverseTime;
-            double reversePower = TransitConstants.feedReversePower;
-            if (!readyToOpenLimit || !areLimitPositionsCalibrated()
-                    || !Double.isFinite(reverseTime) || reverseTime < 0.0
-                    || !Double.isFinite(reversePower) || reversePower >= 0.0 || reversePower < -1.0) {
-                cancelFeeding();
-                firingState = FiringState.WAITING;
+            if (!readyToOpenLimit || !startFeedReverse(TransitState.OPEN)) {
+                waitForFeed();
                 return;
             }
-            // RT takes ownership before the gate moves, including while LT remains held.
-            stopMotor();
-            open();
-            feedReverseTimeSeconds = reverseTime;
-            feedReversePower = reversePower;
-            feedReverseTimer.reset();
-            firingState = FiringState.REVERSING;
         }
-        if (firingState == FiringState.REVERSING) {
-            if (feedReverseTimer.seconds() >= feedReverseTimeSeconds) {
-                firingState = FiringState.FEEDING;
-            } else {
-                setPower(feedReversePower);
+        if (continueFeedReverse()) return;
+        firingState = FiringState.FEEDING;
+        setPower(TransitConstants.feedPower);
+    }
+
+    public void requestTrackedFeed(boolean readyToFeed) {
+        if (!areLimitPositionsCalibrated()) {
+            waitForFeed();
+            return;
+        }
+        if ((firingState == FiringState.IDLE || firingState == FiringState.WAITING)
+                && !startFeedReverse(TransitState.CLOSE)) {
+            waitForFeed();
+            return;
+        }
+        if (continueFeedReverse()) return;
+
+        if (!readyToFeed) {
+            if (firingState != FiringState.PREPARED) {
+                stopMotor();
+                close();
+                firingState = FiringState.PREPARED;
             }
+            return;
         }
-        if (firingState == FiringState.FEEDING) {
-            setPower(TransitConstants.feedPower);
+        if (transitState != TransitState.OPEN) open();
+        firingState = FiringState.FEEDING;
+        setPower(TransitConstants.feedPower);
+    }
+
+    private boolean startFeedReverse(TransitState gatePosition) {
+        double reverseTime = TransitConstants.feedReverseTime;
+        double reversePower = TransitConstants.feedReversePower;
+        if (!areLimitPositionsCalibrated() || !Double.isFinite(reverseTime) || reverseTime < 0.0
+                || !Double.isFinite(reversePower) || reversePower >= 0.0 || reversePower < -1.0) {
+            return false;
         }
+        stopMotor();
+        setState(gatePosition);
+        feedReverseTimeSeconds = reverseTime;
+        feedReversePower = reversePower;
+        feedReverseTimer.reset();
+        firingState = FiringState.REVERSING;
+        return true;
+    }
+
+    private boolean continueFeedReverse() {
+        if (firingState != FiringState.REVERSING
+                || feedReverseTimer.seconds() >= feedReverseTimeSeconds) return false;
+        setPower(feedReversePower);
+        return true;
+    }
+
+    private void waitForFeed() {
+        cancelFeeding();
+        firingState = FiringState.WAITING;
     }
 
     public void cancelFeeding() {
@@ -103,7 +138,7 @@ public class Transit extends SubsystemBase {
 
     public double getFeedReverseTimerProgress() {
         double reverseTime = feedReverseTimeSeconds;
-        if (firingState == FiringState.FEEDING) {
+        if (firingState == FiringState.PREPARED || firingState == FiringState.FEEDING) {
             return 1.0;
         }
         return firingState == FiringState.REVERSING
