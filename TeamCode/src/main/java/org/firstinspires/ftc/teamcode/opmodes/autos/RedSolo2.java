@@ -38,11 +38,11 @@ public class RedSolo2 extends LinearOpMode {
     public static double secondShotVelocityScale = 0.93;
     public static double thirdShotVelocityScale = 0.93;
     private static final long SHOT_DURATION_MS = 900;
-    private static final long SHOT_TIMEOUT_MS = 5000;
+    private static final long SHOT_TIMEOUT_MS = 7000;
     private static final long PATH_4_WAIT_MS = 1000;
-    // Total budget for each path, including any wait after arrival.
+    // Extra path budget includes the arrival wait; shooting approaches use Pedro completion.
     private static final long PATH_TIMEOUT_MS = 2500;
-    private static final long PATH_3_TIMEOUT_MS = 8000;
+    private static final long COLLECT_PATH_TIMEOUT_MS = 3000;
 
     private Follower follower;
     private Intake intake;
@@ -161,7 +161,6 @@ public class RedSolo2 extends LinearOpMode {
             if (transit != null) transit.cancelFeeding();
             if (intake != null) {
                 intake.stop();
-                if (intake.getFlowerState() == Intake.FlowerState.DEPLOYED) intake.raiseFlower();
             }
             if (shooter != null) shooter.stop();
             if (vision != null) vision.stop();
@@ -192,12 +191,24 @@ public class RedSolo2 extends LinearOpMode {
         return pinpoint.getDeviceStatus() == GoBildaPinpointDriver.DeviceStatus.READY;
     }
 
+    private long pathTimeoutMs(int number) {
+        switch (number) {
+            case 1: case 3: case 6:
+                return 0;
+            case 4:
+                return COLLECT_PATH_TIMEOUT_MS;
+            default:
+                return PATH_TIMEOUT_MS;
+        }
+    }
+
     private Command followPath(int number, Path path) {
         return followPath(number, path, 0);
     }
 
     private Command followPath(int number, Path path, long waitMs) {
-        final long timeoutMs = number == 3 ? PATH_3_TIMEOUT_MS : PATH_TIMEOUT_MS;
+        // 0 disables our extra deadline; Pedro still decides when the path ends.
+        final long timeoutMs = pathTimeoutMs(number);
         return new CommandBase() {
             private final ElapsedTime timer = new ElapsedTime();
             private double waitStartedMs;
@@ -215,7 +226,7 @@ public class RedSolo2 extends LinearOpMode {
             @Override
             public void execute() {
                 double elapsedMs = timer.milliseconds();
-                timedOut = elapsedMs >= timeoutMs;
+                timedOut = timeoutMs > 0 && elapsedMs >= timeoutMs;
                 if (!timedOut && waitMs > 0 && waitStartedMs < 0 && !follower.isBusy()) {
                     waitStartedMs = elapsedMs;
                 }
