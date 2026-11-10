@@ -33,6 +33,7 @@ public class ShooterDistanceCheck {
         Field allocator = Unsafe.class.getDeclaredField("theUnsafe");
         allocator.setAccessible(true);
         Shooter shooter = (Shooter) ((Unsafe) allocator.get(null)).allocateInstance(Shooter.class);
+        set(shooter, "distanceVelocityScale", (java.util.function.DoubleSupplier) () -> 1.0);
         for (String name : new String[]{"leftShooter", "rightShooter"}) {
             int index = name.equals("leftShooter") ? 0 : 1;
             double[] power = {0.0};

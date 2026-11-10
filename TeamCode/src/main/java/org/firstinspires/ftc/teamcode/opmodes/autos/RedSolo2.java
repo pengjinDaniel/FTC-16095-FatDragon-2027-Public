@@ -3,9 +3,12 @@ package org.firstinspires.ftc.teamcode.opmodes.autos;
 import static com.pedropathing.api.Paths.curve;
 import static com.pedropathing.api.Paths.line;
 
+import com.acmerobotics.dashboard.config.Config;
 import com.arcrobotics.ftclib.command.Command;
 import com.arcrobotics.ftclib.command.CommandBase;
 import com.arcrobotics.ftclib.command.CommandScheduler;
+import com.arcrobotics.ftclib.command.FunctionalCommand;
+import com.arcrobotics.ftclib.command.ParallelDeadlineGroup;
 import com.arcrobotics.ftclib.command.SequentialCommandGroup;
 import com.pedropathing.api.PoseFactory;
 import com.pedropathing.follower.Follower;
@@ -27,12 +30,19 @@ import org.firstinspires.ftc.teamcode.subsystems.vision.AutoHiveTarget;
 import org.firstinspires.ftc.teamcode.subsystems.vision.CellCluster;
 import org.firstinspires.ftc.teamcode.subsystems.vision.Vision;
 
+@Config
 @Autonomous(name = "RedSolo2", group = "Auto")
 public class RedSolo2 extends LinearOpMode {
+    // Fractions of the distance-calibrated target velocity; tune independently in Dashboard.
+    public static double firstShotVelocityScale = 0.98;
+    public static double secondShotVelocityScale = 0.93;
+    public static double thirdShotVelocityScale = 0.93;
     private static final long SHOT_DURATION_MS = 900;
     private static final long SHOT_TIMEOUT_MS = 5000;
-    private static final long PATH_5_WAIT_MS = 1000;
-    private static final long PATH_5_TIMEOUT_MS = 4000;
+    private static final long PATH_4_WAIT_MS = 1000;
+    // Total budget for each path, including any wait after arrival.
+    private static final long PATH_TIMEOUT_MS = 2500;
+    private static final long PATH_3_TIMEOUT_MS = 8000;
 
     private Follower follower;
     private Intake intake;
@@ -43,7 +53,7 @@ public class RedSolo2 extends LinearOpMode {
     private GoBildaPinpointDriver pinpoint;
     private AutoShootCommand activeShot;
     private int pathNumber;
-    private boolean path5TimedOut;
+    private int lastTimedOutPath;
     private String lastShotResult = "Pending";
 
     private final PoseFactory poseFactory = PoseFactory.degrees();
@@ -56,16 +66,18 @@ public class RedSolo2 extends LinearOpMode {
     private final Pose point2Segment2Heading = poseFactory.of(7.56, 8.0921, -90);
     private final Pose point3Start = poseFactory.of(7.56, 8.0921, 270);
     private final Pose point3 = poseFactory.of(58.1225, 122.0799, 90);
-    private final Pose point3Control1 = poseFactory.of(32.6844, 120.3237, 0);
-    private final Pose point4 = poseFactory.of(46.5666, 127.544, 90);
-    private final Pose point4Segment1Start = poseFactory.of(46.5666, 127.544, 90);
-    private final Pose point4Segment1End = poseFactory.of(46.5666, 127.544, 90);
-    private final Pose point4Segment2Heading = poseFactory.of(46.5666, 127.544, 90);
-    private final Pose point5 = poseFactory.of(46.6072, 132.0961, 90);
-    private final Pose point6 = poseFactory.of(46.6966, 127.8097, 90);
-    private final Pose point7 = poseFactory.of(58.0777, 121.299, 90);
-    private final Pose point8Start = poseFactory.of(58.0777, 121.299, 90);
-    private final Pose point8 = poseFactory.of(11.6138, 93.617, 0);
+    private final Pose point3Control1 = poseFactory.of(51.1409, 111.8053, 0);
+    private final Pose point3Control2 = poseFactory.of(8.1528, 131.0802, 0);
+    private final Pose point3Control3 = poseFactory.of(32.2808, 107.5054, 0);
+    private final Pose point4 = poseFactory.of(46.1507, 134.6827, 90);
+    private final Pose point4Control1 = poseFactory.of(57.5688, 117.2271, 0);
+    private final Pose point4Control2 = poseFactory.of(61.1741, 119.1627, 0);
+    private final Pose point4Control3 = poseFactory.of(50.5966, 111.4921, 0);
+    private final Pose point4Control4 = poseFactory.of(44.7229, 110.8736, 0);
+    private final Pose point5 = poseFactory.of(46.6966, 127.8097, 90);
+    private final Pose point6 = poseFactory.of(58.0777, 121.299, 90);
+    private final Pose point7Start = poseFactory.of(58.0777, 121.299, 90);
+    private final Pose point7 = poseFactory.of(11.6138, 93.617, 0);
 
     public Command autoRoutine() {
         return new SequentialCommandGroup(
@@ -77,12 +89,13 @@ public class RedSolo2 extends LinearOpMode {
                 }),
                 followPath(3, path3()),
                 shoot(true),
-                followPath(4, path4()),
-                followPath(5, path5(), PATH_5_WAIT_MS, PATH_5_TIMEOUT_MS),
+                new ParallelDeadlineGroup(
+                        followPath(4, path4(), PATH_4_WAIT_MS),
+                        collectUntilPathEnds()),
+                followPath(5, path5()),
                 followPath(6, path6()),
-                followPath(7, path7()),
                 shoot(false),
-                followPath(8, path8()));
+                followPath(7, path7()));
     }
 
     @Override
@@ -99,7 +112,7 @@ public class RedSolo2 extends LinearOpMode {
 
             follower = Constants.create(hardwareMap);
             intake = new Intake(hardwareMap);
-            shooter = new Shooter(hardwareMap);
+            shooter = new Shooter(hardwareMap, this::getShotVelocityScale);
             transit = new Transit(hardwareMap);
             vision = new Vision(hardwareMap, Alliance.RED);
             target = new AutoHiveTarget(vision, CellCluster.RED_OPPOSITE_AUDIENCE);
@@ -108,7 +121,7 @@ public class RedSolo2 extends LinearOpMode {
             follower.setPose(start);
 
             scheduler.addButton(() -> {
-                if (activeShot != null || pathNumber == 8) return;
+                if (activeShot != null || pathNumber == 7) return;
                 target.update(follower.pose());
                 if (isStarted() && !isStopRequested()) {
                     shooter.setDistanceTarget(target.getDistanceCm());
@@ -157,15 +170,34 @@ public class RedSolo2 extends LinearOpMode {
         }
     }
 
+    /** Collect throughout path 4 and its arrival wait, then release intake before path 5. */
+    private Command collectUntilPathEnds() {
+        return new FunctionalCommand(
+                () -> {
+                    intake.updateInputs(true, false);
+                    transit.updateIntakeRequest(true, false);
+                },
+                () -> {
+                    intake.updateInputs(true, false);
+                    transit.updateIntakeRequest(true, false);
+                },
+                interrupted -> {
+                    intake.stop();
+                    transit.cancelFeeding();
+                },
+                () -> false, intake, transit);
+    }
+
     private boolean localizationReady() {
         return pinpoint.getDeviceStatus() == GoBildaPinpointDriver.DeviceStatus.READY;
     }
 
     private Command followPath(int number, Path path) {
-        return followPath(number, path, 0, 0);
+        return followPath(number, path, 0);
     }
 
-    private Command followPath(int number, Path path, long waitMs, long timeoutMs) {
+    private Command followPath(int number, Path path, long waitMs) {
+        final long timeoutMs = number == 3 ? PATH_3_TIMEOUT_MS : PATH_TIMEOUT_MS;
         return new CommandBase() {
             private final ElapsedTime timer = new ElapsedTime();
             private double waitStartedMs;
@@ -182,9 +214,8 @@ public class RedSolo2 extends LinearOpMode {
 
             @Override
             public void execute() {
-                if (waitMs == 0 && timeoutMs == 0) return;
                 double elapsedMs = timer.milliseconds();
-                timedOut = timeoutMs > 0 && elapsedMs >= timeoutMs;
+                timedOut = elapsedMs >= timeoutMs;
                 if (!timedOut && waitMs > 0 && waitStartedMs < 0 && !follower.isBusy()) {
                     waitStartedMs = elapsedMs;
                 }
@@ -198,8 +229,12 @@ public class RedSolo2 extends LinearOpMode {
 
             @Override
             public void end(boolean interrupted) {
-                if (timedOut) path5TimedOut = true;
-                if (interrupted || timedOut) stopDrive();
+                if (timedOut) lastTimedOutPath = number;
+                if (interrupted || timedOut) {
+                    stopDrive();
+                    intake.stop();
+                    transit.cancelFeeding();
+                }
             }
         };
     }
@@ -207,6 +242,12 @@ public class RedSolo2 extends LinearOpMode {
     private void stopDrive() {
         follower.stop();
         follower.drivetrain.stop();
+    }
+
+    private double getShotVelocityScale() {
+        if (pathNumber <= 1) return firstShotVelocityScale;
+        if (pathNumber <= 3) return secondShotVelocityScale;
+        return thirdShotVelocityScale;
     }
 
     private Command shoot(boolean deployFlower) {
@@ -238,6 +279,7 @@ public class RedSolo2 extends LinearOpMode {
         telemetry.addData("Shot", activeShot == null ? lastShotResult : activeShot.getStatus());
         telemetry.addData("Shot CELL", target.getCluster());
         telemetry.addData("Shot distance (cm)", target.getDistanceCm());
+        telemetry.addData("Shot velocity scale", getShotVelocityScale());
         if (activeShot != null) {
             telemetry.addData("Shooter target / actual (ticks/s)", "%.0f / %.0f",
                     shooter.getTargetVelocity(), shooter.getRightVelocity());
@@ -246,7 +288,7 @@ public class RedSolo2 extends LinearOpMode {
         }
         telemetry.addData("Shooter at speed", shooter.isReady());
         telemetry.addData("Flower", intake.getFlowerState());
-        telemetry.addData("Path 5 timed out", path5TimedOut);
+        telemetry.addData("Last timed-out path (0 = none)", lastTimedOutPath);
         telemetry.update();
     }
 
@@ -261,13 +303,13 @@ public class RedSolo2 extends LinearOpMode {
     }
 
     public Path path3() {
-        return curve(point3Start, point3Control1, point3).linear(point3Start, point3);
+        return curve(point3Start, point3Control1, point3Control2, point3Control3, point3)
+                .linear(point3Start, point3);
     }
 
     public Path path4() {
-        return line(point3, point4).heading(Interpolator.piecewise()
-                .until(0.6315, Interpolator.linear(point4Segment1Start, point4Segment1End))
-                .until(1, Interpolator.constant(point4Segment2Heading)));
+        return curve(point3, point4Control1, point4Control2, point4Control3, point4Control4, point4)
+                .constant(point4);
     }
 
     public Path path5() {
@@ -279,10 +321,6 @@ public class RedSolo2 extends LinearOpMode {
     }
 
     public Path path7() {
-        return line(point6, point7).constant(point7);
-    }
-
-    public Path path8() {
-        return line(point8Start, point8).linear(point8Start, point8);
+        return line(point7Start, point7).linear(point7Start, point7);
     }
 }

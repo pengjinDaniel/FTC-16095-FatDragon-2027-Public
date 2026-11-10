@@ -8,12 +8,16 @@ import com.qualcomm.robotcore.hardware.HardwareMap;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.util.Range;
 
+import java.util.Objects;
+import java.util.function.DoubleSupplier;
+
 public class Shooter extends SubsystemBase {
     private final DcMotorEx leftShooter;
     private final DcMotorEx rightShooter;
     private final Servo pitchServo;
     // Both motors drive one flywheel; only the right encoder supplies speed feedback.
     private final PIDFController rightController;
+    private final DoubleSupplier distanceVelocityScale;
 
     private double targetVelocity = Double.NaN;
     private double velocitySettleReferenceTarget = Double.NaN;
@@ -30,6 +34,12 @@ public class Shooter extends SubsystemBase {
     private long pitchChangedAtNanos;
 
     public Shooter(HardwareMap hardwareMap) {
+        this(hardwareMap, () -> 1.0);
+    }
+
+    /** Per-instance scaling for distance-based targets; direct velocity/fixed-power tests are unchanged. */
+    public Shooter(HardwareMap hardwareMap, DoubleSupplier distanceVelocityScale) {
+        this.distanceVelocityScale = Objects.requireNonNull(distanceVelocityScale);
         leftShooter = hardwareMap.get(DcMotorEx.class, ShooterConstants.leftShooterName);
         rightShooter = hardwareMap.get(DcMotorEx.class, ShooterConstants.rightShooterName);
         pitchServo = hardwareMap.get(Servo.class, ShooterConstants.pitchServoName);
@@ -82,7 +92,9 @@ public class Shooter extends SubsystemBase {
 
     public boolean setDistanceTarget(double distanceCm, boolean updatePitch) {
         double[][] points = getDistanceShotPoints();
-        if (!areDistanceShotValuesValid(points) || !Double.isFinite(distanceCm) || distanceCm < 0.0) {
+        double scale = distanceVelocityScale.getAsDouble();
+        if (!areDistanceShotValuesValid(points) || !Double.isFinite(distanceCm) || distanceCm < 0.0
+                || !Double.isFinite(scale) || scale <= 0.0 || scale > 1.0) {
             stop();
             return false;
         }
@@ -102,7 +114,7 @@ public class Shooter extends SubsystemBase {
             double pitch = (1.0 - fraction) * lower[2] + fraction * upper[2];
             setPitchPosition(pitch);
         }
-        setTargetVelocity(velocity);
+        setTargetVelocity(velocity * scale);
         return hasTargetVelocity();
     }
 
