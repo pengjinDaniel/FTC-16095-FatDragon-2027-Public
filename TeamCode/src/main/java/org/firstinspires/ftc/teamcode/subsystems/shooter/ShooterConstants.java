@@ -52,7 +52,7 @@ public class ShooterConstants {
     public static double kI = 0.0;
     public static double kD = 0.0;
     // Feedforward is power per tick/s; leave feedback headroom at the shot targets.
-    public static double kF = 0.0006;
+    public static double kF = 0.00063;
 
     // Fractional speed tolerances; fixed power uses a stable measured reference.
     public static double readyEnterTolerance = 0.06;

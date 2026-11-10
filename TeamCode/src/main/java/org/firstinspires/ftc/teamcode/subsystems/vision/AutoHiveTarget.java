@@ -12,7 +12,6 @@ public class AutoHiveTarget {
     private final Vision vision;
     private final CellCluster cluster;
     private HiveState state = HiveState.UNKNOWN;
-    private double lastKnownAngleDegrees = Double.NaN;
     private double distanceCm = Double.NaN;
     private double yawErrorDegrees = Double.NaN;
     private String status = "Waiting for a HIVE observation";
@@ -36,6 +35,7 @@ public class AutoHiveTarget {
             return;
         }
         Pose2D fieldPose = toHiveFieldPose(pedroPose);
+        double[] target = fieldTarget();
         int requiredTagCount = Math.max(1, VisionConstants.minimumBotposeTagCount);
         if (vision.getRawRobotFieldPose().isPresent()
                 && vision.getBotposeTagCount() >= requiredTagCount
@@ -45,31 +45,24 @@ public class AutoHiveTarget {
                     VisionConstants.maximumHiveTiltDegrees, VisionConstants.robotLevelToleranceDegrees);
             VisionMath.HiveCorrection correction = solve.correction;
             status = solve.status;
-            if (correction != null) {
-                double positionDifference = Math.hypot(
-                        correction.robotPose.getX(DistanceUnit.INCH) - fieldPose.getX(DistanceUnit.INCH),
-                        correction.robotPose.getY(DistanceUnit.INCH) - fieldPose.getY(DistanceUnit.INCH));
+            if (correction != null && target != null) {
+                // Read HIVE tilt independently of Pinpoint translation drift.
                 double headingDifference = Math.abs(Math.IEEEremainder(
                         correction.robotPose.getHeading(AngleUnit.DEGREES)
                                 - fieldPose.getHeading(AngleUnit.DEGREES), 360.0));
-                if (positionDifference < DriveConstants.maximumVisionPositionDifferenceInches
-                        && headingDifference < DriveConstants.maximumVisionHeadingDifferenceDegrees) {
-                    lastKnownAngleDegrees = correction.hiveAngleDegrees;
-                    double[] target = fieldTarget();
-                    if (target != null) {
-                        state = Math.abs(lastKnownAngleDegrees) <= VisionConstants.highHiveTiltThresholdDegrees
-                                ? HiveState.MIDDLE
-                                : -Math.sin(Math.toRadians(lastKnownAngleDegrees)) * target[0] > 0.0
-                                ? HiveState.HIGH : HiveState.LOW;
-                    }
+                if (headingDifference < DriveConstants.maximumVisionHeadingDifferenceDegrees) {
+                    double hiveAngleDegrees = correction.hiveAngleDegrees;
+                    state = Math.abs(hiveAngleDegrees) <= VisionConstants.highHiveTiltThresholdDegrees
+                            ? HiveState.MIDDLE
+                            : -Math.sin(Math.toRadians(hiveAngleDegrees)) * target[0] > 0.0
+                            ? HiveState.HIGH : HiveState.LOW;
                 } else {
-                    status = "HIVE observation disagrees with Pedro pose";
+                    status = "HIVE heading disagrees with Pedro pose";
                 }
             }
         }
         // Aim and shot calibration share the upstream CELL-opening center.
         // Only a current observation can report HIGH; odometry supplies the yaw error.
-        double[] target = fieldTarget();
         if (target != null) {
             yawErrorDegrees = VisionMath.coordinateYawErrorDegrees(fieldPose,
                     target[0], target[1], VisionConstants.shooterYawDegrees);

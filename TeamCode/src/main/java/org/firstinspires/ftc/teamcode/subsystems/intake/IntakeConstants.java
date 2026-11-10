@@ -20,10 +20,10 @@ public class IntakeConstants {
     public static double ballExitDistanceCm = 2.5;
 
     public static boolean flowerPositionsCalibrated = true;
-    public static double leftFlowerRaisedPosition = 0.5;
-    public static double rightFlowerRaisedPosition = 0.5;
-    public static double leftFlowerDeployedPosition = 0.2;
-    public static double rightFlowerDeployedPosition = 0.2;
+    public static double leftFlowerRaisedPosition = 0.0;
+    public static double rightFlowerRaisedPosition = 0.95;
+    public static double leftFlowerDeployedPosition = 0.95;
+    public static double rightFlowerDeployedPosition = 0.0;
 
     private IntakeConstants() {
     }

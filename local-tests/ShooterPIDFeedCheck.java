@@ -70,6 +70,7 @@ public class ShooterPIDFeedCheck {
         helper("configure");
         ShooterConstants.targetVelocity = 1500.0;
         ShooterConstants.pitchStartPosition = 0.5;
+        TransitConstants.intakeReverseForwardPower = 0.4;
         Shooter shooter = (Shooter) helper("shooter");
         Field field = ShooterDistanceCheck.class.getDeclaredField("velocities");
         field.setAccessible(true);
@@ -192,6 +193,16 @@ public class ShooterPIDFeedCheck {
         near(position[0], TransitConstants.limitOpen, "RT retains gate ownership while RB is pressed");
         near(transit.getRequestedPower(), TransitConstants.feedPower, "RB does not interrupt automatic RT feed");
         test.gamepad1.right_bumper = false;
+        test.gamepad1.left_bumper = true;
+        test.loop();
+        near(position[0], TransitConstants.limitClosed, "LB cancels active RT feeding and closes the gate");
+        near(transit.getRequestedPower(), TransitConstants.intakeReverseForwardPower, "LB runs transit forward while clearing a jam");
+        check(intake.jamRequested, "LB reverses the intake during active RT feeding");
+        test.gamepad1.left_bumper = false;
+        test.loop();
+        set(shooter, Shooter.class, "withinToleranceSinceNanos", System.nanoTime() - 100_000_000L);
+        test.loop();
+        near(position[0], TransitConstants.limitOpen, "RT opens the gate again after LB release and speed recovery");
         test.gamepad1.right_trigger = 0.0f;
         test.loop();
         near(position[0], TransitConstants.limitClosed, "RT release closes gate");

@@ -3,7 +3,6 @@ package org.firstinspires.ftc.teamcode.opmodes.autos;
 import com.arcrobotics.ftclib.command.Command;
 import com.arcrobotics.ftclib.command.CommandScheduler;
 import com.pedropathing.algorithm.ForesightConfig;
-import com.pedropathing.api.PoseFactory;
 import com.pedropathing.drivetrain.DrivePowers;
 import com.pedropathing.drivetrain.Drivetrain;
 import com.pedropathing.follower.Follower;
@@ -21,7 +20,6 @@ import org.firstinspires.ftc.robotcore.external.navigation.Position;
 import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles;
 import org.firstinspires.ftc.teamcode.commands.AutoShootCommand;
 import org.firstinspires.ftc.teamcode.pedro.Constants;
-import org.firstinspires.ftc.teamcode.subsystems.drive.DriveConstants;
 import org.firstinspires.ftc.teamcode.subsystems.intake.Intake;
 import org.firstinspires.ftc.teamcode.subsystems.shooter.Shooter;
 import org.firstinspires.ftc.teamcode.subsystems.transit.Transit;
@@ -128,9 +126,18 @@ public class TestAutoCheck {
         check(target.getState() == HiveState.UNKNOWN, "tag loss cannot reuse an old HIGH");
         close(target.getDistanceCm(), distance, "tag loss preserves distance geometry");
         close(target.getYawErrorDegrees(), yaw, "tag loss preserves coordinate aiming");
-        frame(vision, new Pose(robot.x() + 100, robot.y(), robot.heading()), 30);
+        Pose visionPose = new Pose(robot.x() + 2, robot.y(), robot.heading());
+        frame(vision, visionPose, 30);
         target.update(robot);
-        check(target.getState() == HiveState.UNKNOWN, "out-of-gate observation cannot report HIGH");
+        check(target.getState() == HiveState.HIGH, "Pinpoint translation drift does not mask HIGH");
+        close(target.getDistanceCm(), distance, "shooting distance still uses Pinpoint");
+        close(target.getYawErrorDegrees(), yaw, "shooting yaw still uses Pinpoint");
+        frame(vision, visionPose, -30);
+        target.update(robot);
+        check(target.getState() == HiveState.LOW, "translation drift does not turn LOW into HIGH");
+        frame(vision, new Pose(robot.x(), robot.y(), robot.heading() + Math.toRadians(20)), 30);
+        target.update(robot);
+        check(target.getState() == HiveState.UNKNOWN, "heading disagreement blocks HIGH");
         frame(vision, robot, 30);
         set(vision, Vision.class, "usableTagCount", 0);
         target.update(robot);
@@ -148,8 +155,7 @@ public class TestAutoCheck {
     private static class Motors implements Drivetrain {
         boolean stopped;
         int writes;
-        DrivePowers last;
-        public void drive(DrivePowers powers, boolean manual) { writes++; last = powers; }
+        public void drive(DrivePowers powers, boolean manual) { writes++; }
         public double maxScaling(DrivePowers a, DrivePowers b) { return 1; }
         public void stop() { stopped = true; }
         public void stop(boolean brake) { stop(); }
@@ -161,16 +167,11 @@ public class TestAutoCheck {
         final List<Path> seen = new ArrayList<>();
         Pose current = new Pose(58.7467, 8.8149, Math.toRadians(90));
         boolean busy;
-        DrivePowers manualRequest;
         Paths() { super(null, new Motors(), null); }
         @Override public void follow(Path path) { seen.add(path); busy = true; }
         @Override public boolean isBusy() { return busy; }
         @Override public Pose pose() { return current; }
         @Override public Velocity velocity() { return Velocity.zero(); }
-        @Override public void manual(DrivePowers powers) {
-            super.manual(powers);
-            manualRequest = powers;
-        }
         @Override public void stop() { super.stop(); busy = false; }
         void finish() { current = seen.get(seen.size() - 1).endPose(); busy = false; }
     }
@@ -192,8 +193,10 @@ public class TestAutoCheck {
         boolean targetSet;
         boolean pitchBlocked;
         boolean rejectDistance;
+        double requestedDistanceCm;
         Flywheels() { super(null); }
         @Override public boolean setDistanceTarget(double distance) {
+            requestedDistanceCm = distance;
             targetSet = Double.isFinite(distance) && !rejectDistance;
             return targetSet;
         }
@@ -213,13 +216,6 @@ public class TestAutoCheck {
         ShotTarget(Vision vision) { super(vision, CellCluster.RED_OPPOSITE_AUDIENCE); }
         // The scheduler test supplies observations; checkHive exercises the real geometry.
         @Override public void update(Pose pose) { }
-    }
-
-    private static void aimAtCell(Paths paths) {
-        Pose pose = paths.current;
-        double heading = Math.atan2(-12.75 - (pose.y() - 72.0), -17.7 - (pose.x() - 72.0))
-                - Math.toRadians(VisionConstants.shooterYawDegrees);
-        paths.current = new Pose(pose.x(), pose.y(), heading);
     }
 
     private static Transit transit() throws Exception {
@@ -242,27 +238,21 @@ public class TestAutoCheck {
         return transit;
     }
 
-    private static Test auto(Paths paths, Collector intake, Flywheels shooter,
+    private static RedTeammates3 auto(Paths paths, Collector intake, Flywheels shooter,
                              Transit transit, AutoHiveTarget target) throws Exception {
-        Test auto = (Test) ALLOCATOR.allocateInstance(Test.class);
-        String[] names = {"start", "path1Start", "path1", "point2", "point2Control1", "point3",
-                "point4Start", "point4", "point5", "point5Control1", "point6Start", "point6",
-                "point7", "point7Control1"};
-        double[][] poses = {{58.7467,8.8149,90},{58.7467,8.8149,270},{58.5392,17.7643,270},
-                {14.0701,47.376,180},{46.5237,43.2977,0},{20.7471,47.2235,178.6914},
-                {20.7471,47.2235,180},{57.7667,23.3801,270},{8.2064,7.9837,179},
-                {47.2051,8.5841,0},{8.2064,7.9837,180},{58.3834,17.221,270},
-                {8.8312,94.3907,270},{18.8328,61.2259,0}};
-        PoseFactory factory = PoseFactory.degrees();
-        for (int i = 0; i < names.length; i++) {
-            set(auto, Test.class, names[i], factory.of(poses[i][0], poses[i][1], poses[i][2]));
-        }
-        set(auto, Test.class, "follower", paths);
-        set(auto, Test.class, "intake", intake);
-        set(auto, Test.class, "shooter", shooter);
-        set(auto, Test.class, "transit", transit);
-        set(auto, Test.class, "target", target);
-        set(auto, Test.class, "pinpoint", ALLOCATOR.allocateInstance(Odometry.class));
+        RedTeammates3 auto = new RedTeammates3();
+        paths.current = auto.path1().get(0);
+        Servo flowerServo = (Servo) Proxy.newProxyInstance(Servo.class.getClassLoader(),
+                new Class<?>[]{Servo.class}, (p, method, values) -> null);
+        set(intake, Intake.class, "leftFlowerServo", flowerServo);
+        set(intake, Intake.class, "rightFlowerServo", flowerServo);
+        intake.raiseFlower();
+        set(auto, RedTeammates3.class, "follower", paths);
+        set(auto, RedTeammates3.class, "intake", intake);
+        set(auto, RedTeammates3.class, "shooter", shooter);
+        set(auto, RedTeammates3.class, "transit", transit);
+        set(auto, RedTeammates3.class, "target", target);
+        set(auto, RedTeammates3.class, "pinpoint", ALLOCATOR.allocateInstance(Odometry.class));
         return auto;
     }
 
@@ -288,12 +278,34 @@ public class TestAutoCheck {
         shooter.targetSet = true;
         AutoHiveTarget target = new ShotTarget(vision());
         set(target, AutoHiveTarget.class, "distanceCm", 100.0);
-        set(target, AutoHiveTarget.class, "yawErrorDegrees", 0.0);
-        Test auto = auto(paths, intake, shooter, transit, target);
+        set(target, AutoHiveTarget.class, "yawErrorDegrees", 20.0);
+        shooter.pitchBlocked = true;
+        RedTeammates3 auto = auto(paths, intake, shooter, transit, target);
+        close(auto.path1().get(0).x(), 53.8888, "first path start X");
         close(auto.path1().get(0).heading(), Math.toRadians(270), "first path heading");
-        close(auto.path2().endPose().x(), 14.0701, "second path end X");
-        close(auto.path4().endPose().y(), 23.3801, "fourth path end Y");
-        close(auto.path7().endPose().y(), 94.3907, "park end Y");
+        close(auto.path1().endPose().x(), 58.5282, "first path end X");
+        close(auto.path1().endPose().y(), 16.7053, "first path end Y");
+        Path secondPath = auto.path2();
+        close(secondPath.get(0.5).x(), 42.851575, "second path midpoint X");
+        close(secondPath.get(0.5).y(), 36.439675, "second path midpoint Y");
+        close(secondPath.endPose().x(), 12.0367, "second path end X");
+        close(secondPath.endPose().y(), 46.7768, "second path end Y");
+        double headingProgress = secondPath.curve.pathCompletion(0.35) / 0.701;
+        close(secondPath.get(0.35).heading(), Math.toRadians(270 - 90 * headingProgress),
+                "second path turns through the first 70.1 percent");
+        close(secondPath.get(0.9).heading(), Math.PI, "second path holds 180 degrees near the end");
+        close(Math.IEEEremainder(auto.path3().endPose().heading(), 2 * Math.PI),
+                Math.toRadians(-177.0643), "third path end heading");
+        close(auto.path4().endPose().x(), 58.3904, "fourth path end X");
+        close(auto.path4().endPose().y(), 22.1377, "fourth path end Y");
+        close(auto.path5().get(0.5).x(), 44.361375, "fifth path midpoint X");
+        close(auto.path5().get(0.5).y(), 12.0945, "fifth path midpoint Y");
+        close(auto.path5().endPose().x(), 10.2145, "fifth path end X");
+        close(auto.path5().endPose().y(), 6.5435, "fifth path end Y");
+        close(auto.path5().endPose().heading(), Math.PI, "fifth path end heading");
+        close(auto.path6().get(0.5).y(), 14.411625, "sixth path follows the supplied curve");
+        close(auto.path7().endPose().x(), 8.0604, "park end X");
+        close(auto.path7().endPose().y(), 99.6839, "park end Y");
 
         CommandScheduler.getInstance().reset();
         CommandScheduler scheduler = CommandScheduler.getInstance();
@@ -301,46 +313,79 @@ public class TestAutoCheck {
         Command routine = auto.autoRoutine();
         scheduler.schedule(routine);
         long started = System.nanoTime(), path2Ended = 0, path4Ended = 0, feedStarted = 0;
+        int[] shootingPaths = {1, 4, 6};
         int shots = 0;
-        boolean previousFeeding = false, checkedWait = false, checkedHighWait = false;
-        Field stageField = Test.class.getDeclaredField("stage");
+        boolean previousFeeding = false, checkedIntakeWait = false;
+        boolean checkedWait = false, checkedShotDelay = false;
+        Field stageField = RedTeammates3.class.getDeclaredField("stage");
         stageField.setAccessible(true);
         while (scheduler.isScheduled(routine)) {
             long now = System.nanoTime();
-            check(now - started < 8_000_000_000L, "routine must finish: paths=" + paths.seen.size()
+            check(now - started < 16_000_000_000L, "routine must finish: paths=" + paths.seen.size()
                     + ", stage=" + stageField.get(auto) + ", feed=" + transit.getFiringState()
                     + ", ready=" + shooter.ready + ", target=" + shooter.targetSet);
             int path = paths.seen.size();
+            boolean finishingPath6 = path == 6 && paths.busy;
+            if (path == 2 && path2Ended != 0 && now - path2Ended < 1_000_000_000L) {
+                check(intake.requested && transit.getRequestedPower() > 0,
+                        "intake stays on through the path 2 wait");
+                check(intake.getFlowerState() == Intake.FlowerState.DEPLOYED,
+                        "flower stays deployed through the path 2 wait");
+                checkedIntakeWait = true;
+            }
             if (paths.busy) {
                 if (path == 2) {
                     check(intake.requested && transit.getRequestedPower() > 0,
                             "path 2 applies both LT outputs");
+                    check(intake.getFlowerState() == Intake.FlowerState.DEPLOYED,
+                            "path 2 deploys the flower");
                     path2Ended = now;
                 }
                 if (path == 3) {
-                    check(now - path2Ended >= 490_000_000L, "path 2 waits 500 ms");
+                    check(now - path2Ended >= 1_000_000_000L, "path 2 waits 1000 ms");
                     check(!intake.requested, "LT released before path 3");
+                    check(intake.getFlowerState() == Intake.FlowerState.RAISED,
+                            "path 3 raises the flower");
                     checkedWait = true;
                 }
                 if (path == 4) path4Ended = now;
-                if (path == 5) check(intake.requested, "path 5 applies LT");
-                if (path == 6 || path == 7) check(!intake.requested, "LT released after path 5");
+                if (path == 5 || path == 6) {
+                    check(intake.requested && transit.getRequestedPower() > 0,
+                            "paths 5 and 6 collect with intake and transit");
+                }
+                if (path == 7) check(!intake.requested, "collection ends before path 7");
                 paths.finish();
             }
             shooter.ready = now - started >= 150_000_000L;
-            if (path == 4 && path4Ended != 0 && now - path4Ended < 200_000_000L) {
-                set(target, AutoHiveTarget.class, "state",
-                        now - path4Ended < 100_000_000L ? HiveState.LOW : HiveState.UNKNOWN);
-                check(transit.getFiringState() != Transit.FiringState.FEEDING,
-                        "LOW and UNKNOWN keep path 4 waiting");
-                checkedHighWait = true;
-            } else if (path == 4) {
-                set(target, AutoHiveTarget.class, "state", HiveState.HIGH);
+            if (path == 4 && path4Ended != 0) {
+                boolean stillWaiting = now - path4Ended < 7_000_000_000L;
+                set(target, AutoHiveTarget.class, "state", stillWaiting ? HiveState.HIGH : HiveState.UNKNOWN);
+                if (stillWaiting) {
+                    check(transit.getState() == Transit.TransitState.CLOSE,
+                            "path 4 keeps the gate closed for seven seconds even at HIGH");
+                    check(paths.idle(), "path 4 waits for its shot with the follower idle");
+                    checkedShotDelay = true;
+                }
+            } else if (path == 6) {
+                set(target, AutoHiveTarget.class, "state", HiveState.UNKNOWN);
             }
             scheduler.run();
+            if (finishingPath6) {
+                check(!intake.requested && transit.getRequestedPower() == 0,
+                        "path 6 releases collection before shooting");
+            }
             boolean feeding = transit.getFiringState() == Transit.FiringState.FEEDING;
             check(intake.feeding == feeding, "intake assists only during forward feed");
-            if (feeding && !previousFeeding) feedStarted = System.nanoTime();
+            if (feeding && !previousFeeding) {
+                check(shots < shootingPaths.length && path == shootingPaths[shots],
+                        "feeds after paths 1, 4, and 6 in order");
+                if (path == 4) {
+                    long delay = now - path4Ended;
+                    check(delay >= 7_000_000_000L && delay < 7_600_000_000L,
+                            "path 4 feeds after the fixed delay even without HIGH");
+                }
+                feedStarted = System.nanoTime();
+            }
             if (!feeding && previousFeeding) {
                 long duration = System.nanoTime() - feedStarted;
                 check(duration >= 880_000_000L && duration < 1_300_000_000L,
@@ -351,68 +396,53 @@ public class TestAutoCheck {
             Thread.sleep(2);
         }
         check(paths.seen.size() == 7 && shots == 3, "seven paths and exactly three shots");
-        check(checkedWait && checkedHighWait, "both waiting behaviors exercised");
+        check(checkedIntakeWait && checkedWait && checkedShotDelay,
+                "intake wait and path 4 fixed delay exercised");
         check(transit.getState() == Transit.TransitState.CLOSE, "routine closes the gate");
         check(intake.clears == 3, "each completed feed clears the ball count");
         scheduler.cancelAll();
+        checkPath2Timeout(auto, paths, intake, transit, false);
+        checkPath2Timeout(auto, paths, intake, transit, true);
 
-        Command waitingShot = (Command) privateShot(auto, true);
-        waitingShot.initialize();
-        set(target, AutoHiveTarget.class, "state", HiveState.HIGH);
-        set(target, AutoHiveTarget.class, "yawErrorDegrees", 20.0);
-        waitingShot.execute();
-        check(paths.manual() && transit.getState() == Transit.TransitState.CLOSE && !intake.feeding,
-                "aim owns Follower MANUAL; misalignment blocks feeding");
-        check(((Motors) paths.drivetrain).writes == 0,
-                "the shot command requests power without directly driving the motors");
-        Field manualOutput = Follower.class.getDeclaredField("manualPowers");
-        manualOutput.setAccessible(true);
-        check(((DrivePowers) manualOutput.get(paths)).turn() > 0.0,
-                "TeleOp clockwise output is converted to Pedro CCW convention");
-        set(target, AutoHiveTarget.class, "yawErrorDegrees", 0.0);
-        waitingShot.execute();
-        Thread.sleep(170);
-        waitingShot.execute();
-        check(transit.getState() == Transit.TransitState.OPEN, "HIGH starts reverse/feed preparation");
-        set(target, AutoHiveTarget.class, "state", HiveState.UNKNOWN);
-        waitingShot.execute();
-        check(transit.getState() == Transit.TransitState.CLOSE, "tag loss during reverse closes the gate");
-        waitingShot.end(true);
-        check(transit.getFiringState() == Transit.FiringState.IDLE && !intake.requested,
-                "cancellation stops feeding and intake");
-        Command relockShot = (Command) privateShot(auto, false);
-        relockShot.initialize(); relockShot.execute();
-        Thread.sleep(170); relockShot.execute();
-        Thread.sleep(115); relockShot.execute();
-        check(intake.feeding, "aligned and ready enables auxiliary intake feed");
-        set(target, AutoHiveTarget.class, "yawErrorDegrees", 10.0);
-        relockShot.execute();
-        check(transit.getState() == Transit.TransitState.CLOSE && !intake.feeding
-                && !relockShot.isFinished(), "lost alignment cancels feed and resets shot timer");
+        Command speedShot = (Command) privateShot(auto, false);
+        speedShot.initialize();
+        shooter.ready = false;
+        speedShot.execute();
+        check(paths.idle() && transit.getState() == Transit.TransitState.CLOSE && !intake.feeding,
+                "the shot waits for flywheel speed with the follower idle");
+        shooter.ready = true;
+        speedShot.execute();
+        check(transit.getState() == Transit.TransitState.OPEN,
+                "flywheel speed starts the shot with yaw error and pitch still settling");
         set(target, AutoHiveTarget.class, "yawErrorDegrees", Double.NaN);
-        relockShot.execute();
-        check(paths.idle() && ((Motors) paths.drivetrain).stopped, "invalid aim stops turning");
-        relockShot.end(true);
-        check(!intake.feeding && ((Motors) paths.drivetrain).stopped,
-                "interruption stops feed and drivetrain");
+        Thread.sleep(115);
+        speedShot.execute();
+        check(intake.feeding && paths.idle(),
+                "feeding at speed uses distance with the follower idle and no yaw estimate");
+        set(speedShot, AutoShootCommand.class, "startedNanos", System.nanoTime() - 5_100_000_000L);
+        check(!speedShot.isFinished(), "the preparation deadline cannot cut short active feeding");
+        speedShot.end(true);
+        check(transit.getFiringState() == Transit.FiringState.IDLE && !intake.feeding
+                        && ((Motors) paths.drivetrain).stopped,
+                "interruption stops feeding and drivetrain");
 
         AutoShootCommand expiredShot = (AutoShootCommand) privateShot(auto, false);
         expiredShot.initialize();
         set(expiredShot, AutoShootCommand.class, "startedNanos", System.nanoTime() - 5_100_000_000L);
         check(expiredShot.isFinished() && expiredShot.hasTimedOut(), "waiting counts toward shot timeout");
         expiredShot.end(false);
-        check(expiredShot.getStatus().equals("Shot timed out") && !intake.feeding
+        check(expiredShot.getStatus().equals("Shot timed out (Preparing shot)") && !intake.feeding
                 && transit.getState() == Transit.TransitState.CLOSE && !shooter.targetSet,
                 "timeout stops the shooting mechanisms and reports the reason");
 
-        // Real Intake: waiting for aim must override full-bin reverse, then assist feeding.
+        // Hold a full bin during shot preparation, then assist feeding.
         Intake realIntake = (Intake) ALLOCATOR.allocateInstance(Intake.class);
         DcMotor realMotor = (DcMotor) Proxy.newProxyInstance(DcMotor.class.getClassLoader(),
                 new Class<?>[]{DcMotor.class}, (p, method, values) -> null);
         set(realIntake, Intake.class, "intakeMotor", realMotor);
         set(realIntake, Intake.class, "ballCount", 4);
         realIntake.updateShotFeed(false);
-        close(realIntake.getRequestedPower(), 0, "full bin held while aiming");
+        close(realIntake.getRequestedPower(), 0, "full bin held before feeding");
         realIntake.updateShotFeed(true);
         close(realIntake.getRequestedPower(), 0.5, "real intake assists feeding");
         realIntake.stop();
@@ -421,6 +451,50 @@ public class TestAutoCheck {
         checkAutoShoot();
         scheduler.reset();
         System.out.println("PASS TestAutoCheck: " + checks + " checks; real scheduler and transit timers");
+    }
+
+    private static void checkPath2Timeout(RedTeammates3 auto, Paths paths, Collector intake, Transit transit,
+                                          boolean finishesLate) throws InterruptedException {
+        paths.seen.clear();
+        Motors motors = (Motors) paths.drivetrain;
+        CommandScheduler scheduler = CommandScheduler.getInstance();
+        Command routine = auto.autoRoutine();
+        long started = System.nanoTime(), path2Started = 0, path2Arrived = 0;
+        scheduler.schedule(routine);
+        try {
+            while (paths.seen.size() < 3 && scheduler.isScheduled(routine)) {
+                long now = System.nanoTime();
+                check(now - started < 8_000_000_000L, "path 2 timeout must start path 3");
+                if (paths.seen.size() == 1 && paths.busy) paths.finish();
+                if (paths.seen.size() == 2) {
+                    if (path2Started == 0) {
+                        path2Started = now;
+                        motors.stopped = false;
+                    }
+                    if (finishesLate && paths.busy && now - path2Started >= 4_750_000_000L) {
+                        paths.finish();
+                        path2Arrived = now;
+                    }
+                }
+                scheduler.run();
+                Thread.sleep(2);
+            }
+            check(paths.seen.size() == 3, "path 3 starts after the path 2 timeout");
+            long now = System.nanoTime();
+            long path2Elapsed = now - path2Started;
+            check(path2Elapsed >= 4_950_000_000L && path2Elapsed < 5_600_000_000L,
+                    "path 2 uses a five-second total deadline");
+            if (finishesLate) {
+                check(path2Arrived != 0 && now - path2Arrived < 1_000_000_000L,
+                        "the deadline cuts short the intake wait after a late arrival");
+            }
+            check(motors.stopped && !intake.requested && transit.getRequestedPower() == 0,
+                    "timeout releases the path 2 drivetrain and intake outputs");
+            check(intake.getFlowerState() == Intake.FlowerState.RAISED,
+                    "path 3 raises the flower after timeout");
+        } finally {
+            scheduler.cancel(routine);
+        }
     }
 
     private static void checkAutoShoot() throws Exception {
@@ -433,52 +507,39 @@ public class TestAutoCheck {
         boolean[] located = {true};
         AutoShootCommand shot = new AutoShootCommand(paths, shooter, intake, transit, target,
                 () -> located[0], 900, 5000, false);
-        double stableTime = DriveConstants.aimLockStableTimeSeconds;
         double reverseTime = TransitConstants.feedReverseTime;
-        boolean holdCalibrated = DriveConstants.positionHoldCalibrated;
         try {
-            DriveConstants.aimLockStableTimeSeconds = 0;
             TransitConstants.feedReverseTime = 0;
-            DriveConstants.positionHoldCalibrated = false;
             shooter.targetSet = true;
             shot.initialize();
             check(shooter.targetSet, "shot initialization preserves pre-spun shooter");
             check(shot.getRequirements().contains(shooter) && shot.getRequirements().contains(intake)
                     && shot.getRequirements().contains(transit), "shot owns all three mechanisms");
-            aimAtCell(paths);
-            paths.current = new Pose(paths.current.x(), paths.current.y(),
-                    paths.current.heading() - Math.toRadians(10));
-            shot.execute();
-            check(transit.getState() == Transit.TransitState.CLOSE, "unlocked aim blocks feeding");
-            Motors motors = (Motors) paths.drivetrain;
-            check(paths.manualRequest.turn() > 0, "positive yaw error gives Pedro CCW power");
-            paths.current = new Pose(paths.current.x(), paths.current.y(),
-                    paths.current.heading() + Math.toRadians(20));
-            shot.execute();
-            check(paths.manualRequest.turn() < 0, "negative yaw error gives Pedro CW power");
-            aimAtCell(paths);
-            shot.execute();
             shot.execute();
             check(transit.getState() == Transit.TransitState.CLOSE, "shooter speed blocks feeding");
+            Motors motors = (Motors) paths.drivetrain;
+            check(paths.idle() && motors.stopped, "the drivetrain is stopped before the shot");
             shooter.ready = true;
             shooter.pitchBlocked = true;
+            TransitConstants.feedReverseTime = -1;
             shot.execute();
-            check(transit.getState() == Transit.TransitState.CLOSE, "pitch settling blocks feeding");
-            shooter.pitchBlocked = false;
+            check(transit.getState() == Transit.TransitState.CLOSE
+                    && shot.getStatus().equals("Invalid transit gate or reverse settings"),
+                    "ready shot reports invalid transit settings");
+            TransitConstants.feedReverseTime = 0;
             shot.execute();
             check(transit.getFiringState() == Transit.FiringState.FEEDING && intake.feeding,
-                    "ready shot uses both TeleOp feed outputs");
-            shooter.ready = false;
-            paths.current = new Pose(paths.current.x(), paths.current.y(), paths.current.heading() + .2);
+                    "speed-ready shot feeds with the distance target applied");
+            double initialDistance = shooter.requestedDistanceCm;
+            paths.current = new Pose(paths.current.x() + 3, paths.current.y() + 2,
+                    paths.current.heading() + .2);
             shot.execute();
-            check(transit.getFiringState() == Transit.FiringState.IDLE && !intake.feeding,
-                    "lost aim pauses automatic feeding");
-            check(motors.writes == 0, "shot submits turn requests without driving the motors directly");
-            shooter.ready = true;
-            aimAtCell(paths);
-            shot.execute();
-            shot.execute();
-            check(intake.feeding, "feeding resumes after realigning");
+            check(transit.getFiringState() == Transit.FiringState.FEEDING && intake.feeding,
+                    "pose changes during a shot keep feeding active");
+            check(shooter.requestedDistanceCm < initialDistance,
+                    "approaching the CELL updates the shooter distance");
+            close(shooter.requestedDistanceCm, target.getDistanceCm(), "shooter uses the updated distance");
+            check(paths.idle() && motors.writes == 0, "pose changes leave the drivetrain idle");
             located[0] = false;
             shot.execute();
             check(transit.getState() == Transit.TransitState.CLOSE && !intake.feeding
@@ -496,22 +557,14 @@ public class TestAutoCheck {
             set(shot, AutoShootCommand.class, "startedNanos", System.nanoTime() - 5_100_000_000L);
             check(shot.isFinished() && shot.hasTimedOut(), "total timeout includes readiness waiting");
             shot.end(false);
-            check(shot.getStatus().equals("Shot timed out"), "timeout is distinguishable from completion");
+            check(shot.getStatus().equals("Shot timed out (Waiting for valid localization)"),
+                    "timeout preserves the last shot blocker");
             paths.current = new Pose(58.5392, 17.7643, 0);
-            aimAtCell(paths);
             shooter.ready = true;
-            DriveConstants.positionHoldCalibrated = true;
             shot.initialize();
             check(!shot.hasTimedOut() && !shot.isFinished(), "rescheduling resets both shot timers");
             shot.execute();
-            paths.current = new Pose(paths.current.x() + 3, paths.current.y() + 2,
-                    paths.current.heading());
-            shot.execute();
-            double fieldX = paths.manualRequest.forward() * Math.cos(paths.current.heading())
-                    - paths.manualRequest.strafe() * Math.sin(paths.current.heading());
-            double fieldY = paths.manualRequest.forward() * Math.sin(paths.current.heading())
-                    + paths.manualRequest.strafe() * Math.cos(paths.current.heading());
-            check(fieldX < 0 && fieldY < 0, "Pedro position hold pushes toward the original anchor");
+            check(intake.feeding && paths.idle(), "rescheduled shot feeds with the follower idle");
             shot.end(true);
             check(motors.stopped && paths.idle() && !shooter.targetSet && !intake.feeding
                     && transit.getState() == Transit.TransitState.CLOSE,
@@ -522,9 +575,7 @@ public class TestAutoCheck {
             check(invalidTime, "timeout shorter than feed duration is rejected");
         } finally {
             shot.end(true);
-            DriveConstants.aimLockStableTimeSeconds = stableTime;
             TransitConstants.feedReverseTime = reverseTime;
-            DriveConstants.positionHoldCalibrated = holdCalibrated;
         }
     }
 
@@ -547,22 +598,21 @@ public class TestAutoCheck {
                 new Class<?>[]{com.pedropathing.localization.Localizer.class}, (p, m, a) -> null);
         Follower follower = new Follower(localizer, motors, algorithm);
         follower.hold(new Pose(0, 0, 0));
-        follower.manual(0, 0, 0.25);
+        follower.stop();
         follower.update(0.02);
-        check(motors.writes == 1 && algorithmCalls[0] == 0 && follower.manual(),
-                "aim MANUAL replaces endpoint HOLD; one drivetrain write, no hold controller");
-        close(motors.last.turn(), 0.25, "manual aim output reaches Pedro drivetrain");
+        check(motors.stopped && motors.writes == 0 && algorithmCalls[0] == 0 && follower.idle(),
+                "stopping endpoint hold leaves the drivetrain idle");
         follower.follow(path);
         follower.update(0.02);
-        check(motors.writes == 2 && algorithmCalls[0] == 1 && follower.following(),
-                "next path regains exclusive Follower output");
+        check(motors.writes == 1 && algorithmCalls[0] == 1 && follower.following(),
+                "next path drives the follower again");
         follower.stop(); follower.update(0.02);
         check(motors.stopped, "idle follower stops drivetrain");
     }
 
-    private static Object privateShot(Test auto, boolean waitForHigh) throws Exception {
-        Method method = Test.class.getDeclaredMethod("shootFor", long.class, boolean.class);
+    private static Object privateShot(RedTeammates3 auto, boolean delayBeforeShooting) throws Exception {
+        Method method = RedTeammates3.class.getDeclaredMethod("shootFor", long.class, boolean.class);
         method.setAccessible(true);
-        return method.invoke(auto, 900L, waitForHigh);
+        return method.invoke(auto, 900L, delayBeforeShooting);
     }
 }

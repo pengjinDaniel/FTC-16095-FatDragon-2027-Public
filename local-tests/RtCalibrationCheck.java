@@ -119,19 +119,17 @@ public class RtCalibrationCheck {
 
     private static class ReadyShooter extends Shooter {
         double distanceCm;
-        double measuredVelocity;
-        int stops;
+        boolean pitchReady;
+        int stopCount;
 
         ReadyShooter() { super(null); }
-        @Override public void stop() { stops++; }
+        @Override public void stop() { stopCount++; }
         @Override public boolean setDistanceTarget(double cm) {
             distanceCm = cm;
             return Double.isFinite(cm);
         }
         @Override public boolean isReady() { return true; }
-        @Override public boolean isPitchReady() { return true; }
-        @Override public double getTargetVelocity() { return 1600; }
-        @Override public double getRightVelocity() { return measuredVelocity; }
+        @Override public boolean isPitchReady() { return pitchReady; }
     }
 
     private static class FeedTimer extends ElapsedTime {
@@ -478,7 +476,7 @@ public class RtCalibrationCheck {
                 "an absent capture is reported without inventing a corrupt field");
     }
 
-    private static void odometryTrackingFeed() throws Exception {
+    private static void odometryAimAndCommittedFeed() throws Exception {
         Fixture f = new Fixture();
         f.initialize();
         double heading = Math.IEEEremainder(Math.toDegrees(Math.atan2(
@@ -488,23 +486,32 @@ public class RtCalibrationCheck {
         f.frame(aligned, 2, false, false, 10_000_000L);
         AutoAimController aim = new AutoAimController();
         ReadyShooter shooter = (ReadyShooter) U.allocateInstance(ReadyShooter.class);
-        shooter.measuredVelocity = shooter.getTargetVelocity();
         QuietIntake intake = (QuietIntake) U.allocateInstance(QuietIntake.class);
         Transit transit = (Transit) U.allocateInstance(Transit.class);
         double[] motorPower = {0};
+        double[] gatePosition = {TransitConstants.limitClosed};
         DcMotor motor = (DcMotor) Proxy.newProxyInstance(DcMotor.class.getClassLoader(),
                 new Class<?>[]{DcMotor.class}, (proxy, method, args) -> {
-                    if (method.getName().equals("setPower")) { motorPower[0] = (double) args[0]; return null; }
-                    throw new AssertionError(method);
+                    if (!method.getName().equals("setPower")) throw new AssertionError(method);
+                    motorPower[0] = (double) args[0];
+                    if (motorPower[0] < 0 && transit.getFiringState() == Transit.FiringState.REVERSING) {
+                        near(gatePosition[0], TransitConstants.limitOpen, "shot reverse power follows the open gate command");
+                    }
+                    return null;
                 });
         Servo servo = (Servo) Proxy.newProxyInstance(Servo.class.getClassLoader(),
-                new Class<?>[]{Servo.class}, (proxy, method, args) -> null);
+                new Class<?>[]{Servo.class}, (proxy, method, args) -> {
+                    if (!method.getName().equals("setPosition")) throw new AssertionError(method);
+                    gatePosition[0] = (double) args[0];
+                    return null;
+                });
         set(transit, Transit.class, "transitMotor", motor);
         set(transit, Transit.class, "limitServo", servo);
         FeedTimer timer = new FeedTimer();
         set(transit, Transit.class, "feedReverseTimer", timer);
         set(transit, Transit.class, "transitState", Transit.TransitState.CLOSE);
         TransitConstants.limitPositionsCalibrated = true;
+        TransitConstants.feedReversePower = -0.4;
         TransitConstants.feedReverseTime = 0.1;
         Gamepad gamepad = (Gamepad) U.allocateInstance(Gamepad.class);
         ShootAssistCommand command = new ShootAssistCommand(
@@ -513,11 +520,9 @@ public class RtCalibrationCheck {
         f.pp.position = pose(100, 40, heading + 10);
         f.rt(aligned, 2, 20_000_000L);
         command.execute();
-        near(f.drive.turn, 0, "automatic turn waits for an eligible frame when usable vision is present");
-        near(motorPower[0], TransitConstants.feedReversePower, "RT prepares the feeder before alignment");
-        check(!command.canFire() && transit.getState() == Transit.TransitState.CLOSE,
-                "the gate stays closed during reverse preparation");
-        check(shooter.stops == 0, "pressing RT preserves shooter pre-spin");
+        near(f.drive.turn, 0, "RT pauses turning when a usable vision correction is pending");
+        near(motorPower[0], 0, "transit stays stopped before calibration");
+        check(shooter.stopCount == 1, "pressing RT resets shooter pre-spin");
         f.rt(null, 0, 25_000_000L);
         command.execute();
         check(Math.abs(f.drive.turn) > 0 && !command.canFire(),
@@ -526,89 +531,59 @@ public class RtCalibrationCheck {
         f.pp.position = aligned;
         f.rt(null, 0, 30_000_000L);
         command.execute();
-        check(!command.canPrepareToFire() && transit.getState() == Transit.TransitState.CLOSE,
-                "alignment cannot release automatic feed before the RT correction");
+        set(aim, AutoAimController.class, "withinToleranceSinceNanos", System.nanoTime() - 1_000_000_000L);
+        command.execute();
+        check(aim.isLocked() && !command.canPrepareToFire() && transit.getState() == Transit.TransitState.CLOSE,
+                "an OD lock cannot release automatic feed before the RT correction");
         f.rt(aligned, 3, 40_000_000L);
         command.execute();
         check(!f.vision.isAimCalibrationReady() && !command.canPrepareToFire() && !command.canFire(),
                 "one successful correction leaves automatic feed waiting");
         f.rt(aligned, 4, 60_000_000L);
         command.execute();
-        check(f.vision.isAimCalibrationReady() && !command.canFire(),
-                "the feeder remains closed while reverse preparation is still running");
-        f.rt(null, 0, 70_000_000L);
-        timer.time = 0.05;
+        check(f.vision.isAimCalibrationReady() && !aim.isLocked() && !command.canFire(),
+                "the second successful correction starts the aim lock interval");
+        set(aim, AutoAimController.class, "withinToleranceSinceNanos", System.nanoTime() - 1_000_000_000L);
+        f.rt(null, 0, 80_000_000L);
         command.execute();
-        check(command.canPrepareToFire() && !command.canFire(),
-                "a clear firing window still waits for the reverse pulse to finish");
+        check(aim.isLocked() && !command.canPrepareToFire()
+                        && transit.getState() == Transit.TransitState.CLOSE,
+                "RT waits for the pitch servo even when aim and speed are ready");
+        near(motorPower[0], 0, "transit waits for pitch to settle");
+        shooter.pitchReady = true;
+        command.execute();
+        check(command.canPrepareToFire() && transit.getFiringState() == Transit.FiringState.REVERSING
+                        && transit.getState() == Transit.TransitState.OPEN,
+                "calibrated aim, ready speed and settled pitch open the gate before reversing");
+        near(motorPower[0], -0.4, "an open gate starts the configured reverse pulse");
+
         double initialDistance = shooter.distanceCm;
         f.pp.position = pose(130, 40, heading + 10);
-        f.rt(null, 0, 80_000_000L);
-        timer.time = 0.11;
-        command.execute();
-        near(motorPower[0], 0, "a bump before reverse ends holds the feeder");
-        check(transit.getState() == Transit.TransitState.CLOSE, "the gate remains closed after the bump");
-        check(Math.abs(f.drive.turn) > 0 && shooter.distanceCm > initialDistance,
-                "the displaced pose updates steering and shot distance");
-        near(Math.hypot(f.drive.forward, f.drive.strafe), 0, "neutral sticks do not pull back to the old pose");
-
-        double newHeading = f.vision.getDesiredHeadingDegrees();
-        f.pp.position = pose(130, 40, newHeading);
-        gamepad.left_stick_y = -0.5f;
-        f.rt(null, 0, 90_000_000L);
-        command.execute();
-        f.rt(null, 0, 95_000_000L);
-        command.execute();
-        check(command.canPrepareToFire() && command.canFire()
-                        && transit.getState() == Transit.TransitState.OPEN,
-                "moving with a clear aim window feeds immediately after preparation");
-        near(Math.hypot(f.drive.forward, f.drive.strafe), 0.5, "RT preserves manual translation");
-        near(motorPower[0], TransitConstants.feedPower, "the feeder drives forward on the first usable window");
         f.rt(pose(-200, -200, 90), 5, 100_000_000L);
+        timer.time = 0.05;
         command.execute();
-        check(command.canFire() && f.pp.writes == 4,
-                "later visual frames cannot alter a calibrated OD shot while RT is held");
+        check(!aim.isLocked() && f.pp.writes == 4 && shooter.distanceCm > initialDistance,
+                "new OD geometry updates the shot after the two visual corrections");
+        near(motorPower[0], -0.4, "losing alignment does not restart or cancel the reverse pulse");
 
-        f.pp.position = pose(130, 40, newHeading + 10);
-        f.rt(null, 0, 110_000_000L);
+        timer.time = 0.1;
         command.execute();
-        check(!command.canFire() && transit.getState() == Transit.TransitState.CLOSE,
-                "losing alignment while feeding closes the gate");
-        near(motorPower[0], 0, "losing alignment while feeding stops transit");
-        f.pp.position = pose(130, 40, newHeading);
-        f.rt(null, 0, 120_000_000L);
+        check(command.canFire() && transit.getState() == Transit.TransitState.OPEN,
+                "the committed shot advances at the reverse deadline");
+        near(motorPower[0], TransitConstants.feedPower, "the deadline switches transit to forward feed");
         command.execute();
-        f.rt(null, 0, 130_000_000L);
-        command.execute();
-        near(motorPower[0], TransitConstants.feedPower, "reacquisition resumes feed without another reverse pulse");
-
-        shooter.measuredVelocity = 1300;
-        command.execute();
-        near(motorPower[0], 0, "current wheel speed can pause feeding despite a prior ready flag");
-        shooter.measuredVelocity = shooter.getTargetVelocity();
-        command.execute();
-        near(motorPower[0], TransitConstants.feedPower, "feed resumes at the current target speed");
-
-        f.pp.position = pose(130, 40, newHeading + DriveConstants.aimLockToleranceDegrees * 0.99);
-        f.rt(null, 0, 135_000_000L);
-        command.execute();
-        check(Math.abs(f.vision.getYawErrorDegrees()) <= DriveConstants.aimLockToleranceDegrees
-                        && !command.canFire(),
-                "a moving heading can be aligned now but outside the window at ball release");
-        f.pp.position = pose(130, 40, newHeading);
-        f.rt(null, 0, 137_000_000L);
-        command.execute();
-        f.rt(null, 0, 139_000_000L);
-        command.execute();
-        check(command.canFire(), "a settled heading resumes feed after a sweep");
+        near(motorPower[0], TransitConstants.feedPower, "forward feed continues while the shot is held");
 
         f.pp.status = DeviceStatus.FAULT_BAD_READ;
-        f.rt(aligned, 6, 140_000_000L);
+        f.rt(aligned, 6, 120_000_000L);
         command.execute();
-        near(motorPower[0], 0, "invalid OD stops the feeder");
-        check(!command.canPrepareToFire() && transit.getState() == Transit.TransitState.CLOSE,
-                "invalid field position clears the firing window and closes the feed gate");
+        check(!aim.isLocked() && !command.canFire(), "invalid field position clears aim lock and cancels feeding");
+        check(Double.isNaN(shooter.distanceCm), "invalid odometry clears the shooter distance target");
+        near(motorPower[0], 0, "invalid odometry stops transit");
+        near(gatePosition[0], TransitConstants.limitClosed, "invalid odometry closes the gate");
+
         command.end(true);
+        check(shooter.stopCount == 2, "releasing RT stops the shooter");
         near(f.drive.turn, 0, "ending RT stops turning");
     }
 
@@ -751,7 +726,7 @@ public class RtCalibrationCheck {
         rtFaultAndStop();
         recoveryChecksDeviceOffsets();
         pinpointBadReadDiagnostics();
-        odometryTrackingFeed();
+        odometryAimAndCommittedFeed();
         frozenStaleAndWrongPipeline();
         mixedAllianceTagsStayUsable();
         System.out.println("PASS RtCalibrationCheck: " + checks

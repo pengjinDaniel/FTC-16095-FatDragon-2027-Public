@@ -6,7 +6,6 @@ public class VisionConstants {
     public static int redPipelineIndex = 1;
     public static int pollRateHz = 50;
     public static long maxResultAgeMs = 200;
-    // Minimum individual AprilTag area as a percentage of the image (0-100).
     public static double minimumTargetArea = 0.01;
     public static int minimumBotposeTagCount = 1;
 
