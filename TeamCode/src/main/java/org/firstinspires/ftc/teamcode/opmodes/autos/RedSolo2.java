@@ -6,10 +6,7 @@ import static com.pedropathing.api.Paths.line;
 import com.arcrobotics.ftclib.command.Command;
 import com.arcrobotics.ftclib.command.CommandBase;
 import com.arcrobotics.ftclib.command.CommandScheduler;
-import com.arcrobotics.ftclib.command.InstantCommand;
-import com.arcrobotics.ftclib.command.ParallelDeadlineGroup;
 import com.arcrobotics.ftclib.command.SequentialCommandGroup;
-import com.arcrobotics.ftclib.command.WaitUntilCommand;
 import com.pedropathing.api.PoseFactory;
 import com.pedropathing.follower.Follower;
 import com.pedropathing.math.Pose;
@@ -59,7 +56,7 @@ public class RedSolo2 extends LinearOpMode {
     private final Pose point2Segment2Heading = poseFactory.of(7.56, 8.0921, -90);
     private final Pose point3Start = poseFactory.of(7.56, 8.0921, 270);
     private final Pose point3 = poseFactory.of(58.1225, 122.0799, 90);
-    private final Pose point3Control1 = poseFactory.of(27.545, 112.1358, 0);
+    private final Pose point3Control1 = poseFactory.of(32.6844, 120.3237, 0);
     private final Pose point4 = poseFactory.of(46.5666, 127.544, 90);
     private final Pose point4Segment1Start = poseFactory.of(46.5666, 127.544, 90);
     private final Pose point4Segment1End = poseFactory.of(46.5666, 127.544, 90);
@@ -71,28 +68,20 @@ public class RedSolo2 extends LinearOpMode {
     private final Pose point8 = poseFactory.of(11.6138, 93.617, 0);
 
     public Command autoRoutine() {
-        Command deployFlower = new WaitUntilCommand(
-                () -> follower.parametricCompletion() >= 0.5 || !follower.isBusy())
-                .andThen(new InstantCommand(() -> {
-                    if (intake.getFlowerState() == Intake.FlowerState.RAISED) {
-                        intake.toggleFlower();
-                    }
-                }, intake));
-
         return new SequentialCommandGroup(
                 followPath(1, path1()),
-                shoot(),
+                shoot(false),
                 followPath(2, path2()).beforeStarting(() -> {
                     intake.updateInputs(true, false);
                     transit.updateIntakeRequest(true, false);
                 }),
                 followPath(3, path3()),
-                shoot(),
-                new ParallelDeadlineGroup(followPath(4, path4()), deployFlower),
+                shoot(true),
+                followPath(4, path4()),
                 followPath(5, path5(), PATH_5_WAIT_MS, PATH_5_TIMEOUT_MS),
                 followPath(6, path6()),
                 followPath(7, path7()),
-                shoot(),
+                shoot(false),
                 followPath(8, path8()));
     }
 
@@ -220,13 +209,16 @@ public class RedSolo2 extends LinearOpMode {
         follower.drivetrain.stop();
     }
 
-    private Command shoot() {
+    private Command shoot(boolean deployFlower) {
         return new AutoShootCommand(follower, shooter, intake, transit, target,
                 this::localizationReady, SHOT_DURATION_MS, SHOT_TIMEOUT_MS, false) {
             @Override
             public void initialize() {
                 activeShot = this;
                 super.initialize();
+                if (deployFlower && intake.getFlowerState() == Intake.FlowerState.RAISED) {
+                    intake.toggleFlower();
+                }
             }
 
             @Override
@@ -244,7 +236,14 @@ public class RedSolo2 extends LinearOpMode {
         telemetry.addData("X / Y / heading", "%.2f / %.2f / %.1f",
                 pose.x(), pose.y(), Math.toDegrees(pose.heading()));
         telemetry.addData("Shot", activeShot == null ? lastShotResult : activeShot.getStatus());
+        telemetry.addData("Shot CELL", target.getCluster());
         telemetry.addData("Shot distance (cm)", target.getDistanceCm());
+        if (activeShot != null) {
+            telemetry.addData("Shooter target / actual (ticks/s)", "%.0f / %.0f",
+                    shooter.getTargetVelocity(), shooter.getRightVelocity());
+            telemetry.addData("Shooter raw / applied power", "%.3f / %.3f",
+                    shooter.getRightPidOutput(), shooter.getRightPower());
+        }
         telemetry.addData("Shooter at speed", shooter.isReady());
         telemetry.addData("Flower", intake.getFlowerState());
         telemetry.addData("Path 5 timed out", path5TimedOut);
