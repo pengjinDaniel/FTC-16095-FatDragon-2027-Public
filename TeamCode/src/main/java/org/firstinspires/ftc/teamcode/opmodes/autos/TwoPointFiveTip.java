@@ -37,11 +37,7 @@ import org.firstinspires.ftc.teamcode.subsystems.vision.Vision;
 @Config
 @Autonomous(name = "2.5Tip", group = "Auto")
 public class TwoPointFiveTip extends LinearOpMode {
-    // Fractions of the distance-calibrated target velocity; tune independently in Dashboard.
-    public static double firstShotVelocityScale = 0.98;
-    public static double secondShotVelocityScale = 0.93;
-    public static double thirdShotVelocityScale = 0.93;
-    public static double fourthShotVelocityScale = 0.97;
+    private static final double SHOT_VELOCITY_TICKS_PER_SECOND = 1515.0;
     private static final long SHOT_DURATION_MS = 900;
     private static final long SHOT_TIMEOUT_MS = 7000;
     private static final long PATH_4_WAIT_MS = 1000;
@@ -89,13 +85,13 @@ public class TwoPointFiveTip extends LinearOpMode {
     private final Pose point7Start = poseFactory.of(58.0777, 121.299, 90);
     private final Pose point7 = poseFactory.of(23.0251, 46.4503, 180);
     private final Pose point7Control1 = poseFactory.of(18.0353, 112.38, 0);
-    private final Pose point8 = poseFactory.of(6.8403, 46.141, 180);
+    private final Pose point8 = poseFactory.of(6.8403, 45.9889, 180);
     private final Pose point9 = poseFactory.of(23.0464, 46.1933, 180);
     private final Pose point10Start = poseFactory.of(23.0464, 46.1933, 180);
     private final Pose point10 = poseFactory.of(57.1782, 24.1118, 270);
 
     private final Pose point11Start = poseFactory.of(57.1782, 24.1118, 270);
-    private final Pose point11 = poseFactory.of(11.7493, 97.759, 270);
+    private final Pose point11 = poseFactory.of(11.7493, 97.759, 0);
     private final Pose point11Control1 = poseFactory.of(10.9912, 21.8276, 0);
 
     public Command autoRoutine() {
@@ -139,7 +135,7 @@ public class TwoPointFiveTip extends LinearOpMode {
 
             follower = Constants.create(hardwareMap);
             intake = new Intake(hardwareMap);
-            shooter = new Shooter(hardwareMap, this::getShotVelocityScale);
+            shooter = new Shooter(hardwareMap, SHOT_VELOCITY_TICKS_PER_SECOND);
             transit = new Transit(hardwareMap);
             vision = new Vision(hardwareMap, Alliance.RED);
             target = new AutoHiveTarget(vision, CellCluster.RED_OPPOSITE_AUDIENCE);
@@ -290,13 +286,6 @@ public class TwoPointFiveTip extends LinearOpMode {
         follower.drivetrain.stop();
     }
 
-    private double getShotVelocityScale() {
-        if (pathNumber <= 1) return firstShotVelocityScale;
-        if (pathNumber <= 3) return secondShotVelocityScale;
-        if (pathNumber <= 6) return thirdShotVelocityScale;
-        return fourthShotVelocityScale;
-    }
-
     private Command shoot(boolean deployFlower) {
         return new AutoShootCommand(follower, shooter, intake, transit, target,
                 this::localizationReady, SHOT_DURATION_MS, SHOT_TIMEOUT_MS, false) {
@@ -334,8 +323,8 @@ public class TwoPointFiveTip extends LinearOpMode {
     private void recordShotDiagnostics() {
         lastShotLogNanos = System.nanoTime();
         lastShotDiagnostics = String.format(Locale.US,
-                "shot=%d path=%d mode=%s scale=%.3f distance=%.1f target=%.1f actual=%.1f raw=%.3f applied=%.3f ready=%s status=%s",
-                shotAttempt, pathNumber, shooter.getControlMode(), getShotVelocityScale(),
+                "shot=%d path=%d mode=%s fixedTarget=%.1f distance=%.1f target=%.1f actual=%.1f raw=%.3f applied=%.3f ready=%s status=%s",
+                shotAttempt, pathNumber, shooter.getControlMode(), SHOT_VELOCITY_TICKS_PER_SECOND,
                 target.getDistanceCm(), shooter.getTargetVelocity(), shooter.getRightVelocity(),
                 shooter.getRightPidOutput(), shooter.getRightPower(), shooter.isReady(),
                 activeShot == null ? lastShotResult : activeShot.getStatus());
@@ -351,7 +340,7 @@ public class TwoPointFiveTip extends LinearOpMode {
         telemetry.addData("Last shot details", lastShotDiagnostics);
         telemetry.addData("Shot CELL", target.getCluster());
         telemetry.addData("Shot distance (cm)", target.getDistanceCm());
-        telemetry.addData("Shot velocity scale", getShotVelocityScale());
+        telemetry.addData("Fixed shot target (ticks/s)", SHOT_VELOCITY_TICKS_PER_SECOND);
         if (activeShot != null) {
             telemetry.addData("Shooter target / actual (ticks/s)", "%.0f / %.0f",
                     shooter.getTargetVelocity(), shooter.getRightVelocity());

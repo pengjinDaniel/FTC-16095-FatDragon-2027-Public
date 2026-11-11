@@ -18,6 +18,8 @@ public class Shooter extends SubsystemBase {
     // Both motors drive one flywheel; only the right encoder supplies speed feedback.
     private final PIDFController rightController;
     private final DoubleSupplier distanceVelocityScale;
+    // Zero keeps distance-based velocity; positive values override velocity only, not pitch.
+    private final double fixedDistanceTargetVelocity;
 
     private double targetVelocity = Double.NaN;
     private double velocitySettleReferenceTarget = Double.NaN;
@@ -39,7 +41,25 @@ public class Shooter extends SubsystemBase {
 
     /** Per-instance scaling for distance-based targets; direct velocity/fixed-power tests are unchanged. */
     public Shooter(HardwareMap hardwareMap, DoubleSupplier distanceVelocityScale) {
+        this(hardwareMap, distanceVelocityScale, 0.0);
+    }
+
+    /** Fixed encoder velocity for all distance-based shots; pitch still follows distance. */
+    public Shooter(HardwareMap hardwareMap, double fixedVelocityTicksPerSecond) {
+        this(hardwareMap, () -> 1.0, requirePositiveVelocity(fixedVelocityTicksPerSecond));
+    }
+
+    private static double requirePositiveVelocity(double velocity) {
+        if (!Double.isFinite(velocity) || velocity <= 0.0) {
+            throw new IllegalArgumentException("Fixed shot velocity must be finite and positive");
+        }
+        return velocity;
+    }
+
+    private Shooter(HardwareMap hardwareMap, DoubleSupplier distanceVelocityScale,
+                    double fixedDistanceTargetVelocity) {
         this.distanceVelocityScale = Objects.requireNonNull(distanceVelocityScale);
+        this.fixedDistanceTargetVelocity = fixedDistanceTargetVelocity;
         leftShooter = hardwareMap.get(DcMotorEx.class, ShooterConstants.leftShooterName);
         rightShooter = hardwareMap.get(DcMotorEx.class, ShooterConstants.rightShooterName);
         pitchServo = hardwareMap.get(Servo.class, ShooterConstants.pitchServoName);
@@ -114,7 +134,8 @@ public class Shooter extends SubsystemBase {
             double pitch = (1.0 - fraction) * lower[2] + fraction * upper[2];
             setPitchPosition(pitch);
         }
-        setTargetVelocity(velocity * scale);
+        setTargetVelocity(fixedDistanceTargetVelocity > 0.0
+                ? fixedDistanceTargetVelocity : velocity * scale);
         return hasTargetVelocity();
     }
 
