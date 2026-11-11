@@ -16,6 +16,7 @@ import org.firstinspires.ftc.robotcore.external.navigation.Pose2D;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.UnnormalizedAngleUnit;
+import org.firstinspires.ftc.teamcode.subsystems.localization.PinpointPoseEstimator;
 
 public class Drive extends SubsystemBase {
     private static final long DRIVER_HEADING_HOLD_NANOS = 100_000_000L;
@@ -27,6 +28,7 @@ public class Drive extends SubsystemBase {
     private static final Pose2D UNKNOWN_POSE = new Pose2D(
             DistanceUnit.INCH, Double.NaN, Double.NaN, AngleUnit.RADIANS, Double.NaN);
     private final GoBildaPinpointDriver pinpoint;
+    private final PinpointPoseEstimator poseEstimator;
     private boolean fieldPoseInitialized;
     private boolean pinpointReadInterrupted;
     private boolean pinpointConfigurationLost;
@@ -50,6 +52,11 @@ public class Drive extends SubsystemBase {
     private String localizationStatus = "Waiting for Limelight field initialization";
 
     public Drive(HardwareMap hardwareMap) {
+        this(hardwareMap, false);
+    }
+
+    public Drive(HardwareMap hardwareMap, boolean usePoseFusion) {
+        poseEstimator = usePoseFusion ? new PinpointPoseEstimator() : null;
         leftFrontMotor = hardwareMap.get(DcMotorEx.class, DriveConstants.leftFrontMotorName);
         leftBackMotor = hardwareMap.get(DcMotorEx.class, DriveConstants.leftBackMotorName);
         rightFrontMotor = hardwareMap.get(DcMotorEx.class, DriveConstants.rightFrontMotorName);
@@ -93,7 +100,8 @@ public class Drive extends SubsystemBase {
             pinpointReadInterrupted = true;
             return;
         }
-        if (!isFinitePose(pinpoint.getPosition())) {
+        Pose2D odometry = pinpoint.getPosition();
+        if (!isFinitePose(odometry)) {
             pinpointBadReadStreak = 0;
             clearVisionPose("Pinpoint returned invalid X/Y/H");
             pinpointReadInterrupted = true;
@@ -135,6 +143,10 @@ public class Drive extends SubsystemBase {
         lastValidDriverHeadingRadians = getDriverHeadingRadians();
         lastValidDriverHeadingNanos = readStarted;
         pinpointBadReadStreak = 0;
+        if (poseEstimator != null && hasHealthyOdometryForFusion()) {
+            long sampleNanos = readStarted + (long) (pinpointReadDurationMs * 500_000.0);
+            poseEstimator.updateOdometry(sampleNanos, odometry);
+        }
     }
 
     private long readPinpoint(String phase) {
@@ -229,9 +241,10 @@ public class Drive extends SubsystemBase {
                         lastPinpointBadReadReason);
     }
 
-    // Vision establishes the field frame; Pinpoint tracks movement between vision overwrites.
+    // A field pose is available only when the selected localization path is ready.
     public Pose2D getPose() {
-        return isFieldPoseInitialized() ? pinpoint.getPosition() : UNKNOWN_POSE;
+        if (!isFieldPoseInitialized()) return UNKNOWN_POSE;
+        return poseEstimator == null ? pinpoint.getPosition() : poseEstimator.getEstimatedPose();
     }
 
     // A local odometry frame is sufficient for comparing motion between visual observations.
@@ -249,7 +262,33 @@ public class Drive extends SubsystemBase {
         return pinpoint.getPosition();
     }
 
+    public boolean usesPoseFusion() {
+        return poseEstimator != null;
+    }
+
+    public void setVisionPausedForAim(boolean paused, long nowNanos) {
+        if (poseEstimator != null) poseEstimator.setVisionPaused(paused, nowNanos);
+    }
+
+    public boolean addTimedVisionPose(Pose2D pose, double frameTimestamp, long captureNanos,
+                                      long nowNanos, double xyStdMeters, boolean allowReanchor) {
+        if (poseEstimator == null || !hasHealthyOdometryForFusion() || !isFinitePose(pose)) {
+            return false;
+        }
+        boolean accepted = poseEstimator.addVisionMeasurement(
+                pose, captureNanos, nowNanos, xyStdMeters, allowReanchor);
+        if (accepted) lastVisionTimestamp = frameTimestamp;
+        return accepted;
+    }
+
+    private boolean hasHealthyOdometryForFusion() {
+        return DriveConstants.pinpointConfigurationConfirmed && !pinpointConfigurationLost
+                && !pinpointReadInterrupted
+                && pinpoint.getDeviceStatus() == GoBildaPinpointDriver.DeviceStatus.READY;
+    }
+
     public boolean updateVisionPose(Pose2D pose, double frameTimestamp, long nowNanos) {
+        if (poseEstimator != null) return false;
         if (!DriveConstants.pinpointConfigurationConfirmed) {
             localizationStatus = "Pinpoint configuration needs confirmation";
             resetVisionRejectionSequence();
@@ -337,6 +376,7 @@ public class Drive extends SubsystemBase {
     }
 
     public void clearVisionPose(String reason) {
+        if (poseEstimator != null) poseEstimator.reset();
         fieldPoseInitialized = false;
         pinpointReadInterrupted = false;
         lastVisionTimestamp = Double.NaN;
@@ -358,9 +398,19 @@ public class Drive extends SubsystemBase {
         return isFieldPoseInitialized() && Double.isFinite(timestamp) && timestamp == lastVisionTimestamp;
     }
 
-    public String getLocalizationStatus() { return localizationStatus; }
+    public String getLocalizationStatus() {
+        return poseEstimator != null && hasHealthyOdometryForFusion()
+                ? poseEstimator.getStatus(System.nanoTime()) : localizationStatus;
+    }
+
+    public String getPoseFusionDiagnostics() {
+        return poseEstimator == null ? "" : poseEstimator.getDiagnostics(System.nanoTime());
+    }
 
     public boolean isFieldPoseInitialized() {
+        if (poseEstimator != null) {
+            return hasHealthyOdometryForFusion() && poseEstimator.isUsable(System.nanoTime());
+        }
         return fieldPoseInitialized && !pinpointReadInterrupted
                 && pinpoint.getDeviceStatus() == GoBildaPinpointDriver.DeviceStatus.READY;
     }

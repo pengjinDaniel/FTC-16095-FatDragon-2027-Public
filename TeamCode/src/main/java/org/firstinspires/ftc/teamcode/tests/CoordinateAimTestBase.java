@@ -44,7 +44,7 @@ public abstract class CoordinateAimTestBase extends OpMode {
         lastLoopNanos = 0;
         loopDtSeconds = 0.0;
         dashboard = FtcDashboard.getInstance();
-        drive = new Drive(hardwareMap);
+        drive = new Drive(hardwareMap, true);
         vision = new Vision(hardwareMap, getAlliance());
         autoAim = new AutoAimController();
         positionHold = new PositionHoldController();
@@ -75,7 +75,6 @@ public abstract class CoordinateAimTestBase extends OpMode {
             drive.resetDriverHeading();
         }
         driverHeadingResetPressed = gamepad1.left_stick_button;
-        aimRequested = gamepad1.right_trigger > TeleOpConstants.triggerThreshold;
         double forward = -applyDeadband(gamepad1.left_stick_y);
         double strafe = applyDeadband(gamepad1.left_stick_x);
         manualTranslation = forward != 0.0 || strafe != 0.0;
@@ -92,6 +91,10 @@ public abstract class CoordinateAimTestBase extends OpMode {
             turnPower = 0.0;
             drive.stop();
         } else if (aimRequested) {
+            if (vision.shouldResetAimControl()) {
+                autoAim.reset();
+                positionHold.reset();
+            }
             if (manualTranslation || !vision.isAimCalibrationReady()) {
                 positionHold.reset();
             } else {
@@ -103,7 +106,6 @@ public abstract class CoordinateAimTestBase extends OpMode {
                 forward = positionHold.getForwardPower();
                 strafe = positionHold.getStrafePower();
             }
-            if (vision.wasCorrectionApplied()) autoAim.reset();
             turnPower = autoAim.calculateTurnPower(
                     vision.hasValidAimingTarget() && !vision.shouldPauseForAimCalibration(),
                     vision.getYawErrorDegrees());
@@ -135,23 +137,27 @@ public abstract class CoordinateAimTestBase extends OpMode {
     private void updateSensors() {
         drive.periodic();
         vision.update();
-        vision.updateAimTarget(drive, stopLatched || gamepad1.b,
-                gamepad1.right_trigger > TeleOpConstants.triggerThreshold);
+        aimRequested = gamepad1.right_trigger > TeleOpConstants.triggerThreshold;
+        vision.updateAimTarget(drive, stopLatched || gamepad1.b, aimRequested);
     }
 
     private void showTelemetry() {
         Pose2D pose = drive.getPose();
+        Pose2D rawOdometry = drive.getRawOdometryPose();
+        String fusionDiagnostics = drive.getPoseFusionDiagnostics();
         String selectedCell = vision.getSelectedCluster().map(Enum::name).orElse("NONE");
         String controlMode = !started ? "INIT" : stopLatched ? "STOPPED"
-                : !aimRequested ? "MANUAL" : vision.hasValidAimingTarget() ? "ODOMETRY_AIM" : "WAITING_FOR_FIELD_POSE";
+                : !aimRequested ? "MANUAL" : vision.hasValidAimingTarget() ? "FUSED_POSE_AIM" : "WAITING_FOR_FIELD_POSE";
 
-        telemetry.addLine("RT: two vision corrections, then Pinpoint aim"
-                + " | Release RT: continuous vision correction"
-                + " | B: stop | L3: reset forward");
+        telemetry.addLine("RT: one visual correction, then Pinpoint | B: stop | L3: reset forward");
         telemetry.addData("Control Mode", controlMode);
         telemetry.addData("Target Status", vision.getTargetStatus());
-        telemetry.addData("RT Calibration", vision.getRtCalibrationStatus());
-        telemetry.addData("Pinpoint X/Y/H (in / deg)", "%.1f, %.1f / %+.1f",
+        telemetry.addData("Fusion", fusionDiagnostics);
+        telemetry.addData("MT1 status", vision.getCalibrationStatus());
+        telemetry.addData("Local OD X/Y/H (in / deg)", "%.1f, %.1f / %+.1f",
+                rawOdometry.getX(DistanceUnit.INCH), rawOdometry.getY(DistanceUnit.INCH),
+                rawOdometry.getHeading(AngleUnit.DEGREES));
+        telemetry.addData("Fused field X/Y/H (in / deg)", "%.1f, %.1f / %+.1f",
                 pose.getX(DistanceUnit.INCH), pose.getY(DistanceUnit.INCH),
                 pose.getHeading(AngleUnit.DEGREES));
         telemetry.addData("CELL / Target XY (in)", "%s / %.1f, %.1f",
@@ -167,8 +173,6 @@ public abstract class CoordinateAimTestBase extends OpMode {
                 DriveConstants.autoAimKp, DriveConstants.autoAimKi,
                 DriveConstants.autoAimKd, DriveConstants.autoAimKf);
         telemetry.addData("Aim Locked", vision.isAimCalibrationReady() && autoAim.isLocked());
-        telemetry.addData("Calibration / Wait (s)", "%s / %.1f",
-                vision.getCalibrationStatus(), vision.getCalibrationCooldownRemainingSeconds());
         telemetry.update();
 
         if (dashboard != null) {
@@ -189,7 +193,10 @@ public abstract class CoordinateAimTestBase extends OpMode {
             packet.put("aimLocked", vision.isAimCalibrationReady() && autoAim.isLocked());
             packet.put("validAimTarget", vision.hasValidAimingTarget());
             packet.put("visionCalibrationStatus", vision.getCalibrationStatus());
-            packet.put("visionCalibrationCooldownSec", vision.getCalibrationCooldownRemainingSeconds());
+            packet.put("poseFusion", fusionDiagnostics);
+            packet.put("odometryXIn", rawOdometry.getX(DistanceUnit.INCH));
+            packet.put("odometryYIn", rawOdometry.getY(DistanceUnit.INCH));
+            packet.put("odometryHeadingDeg", rawOdometry.getHeading(AngleUnit.DEGREES));
             packet.put("loopDtSec", loopDtSeconds);
             packet.put("autoAimKp", DriveConstants.autoAimKp);
             packet.put("autoAimKi", DriveConstants.autoAimKi);

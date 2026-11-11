@@ -73,6 +73,13 @@ public class ShootAssistCommand extends CommandBase {
 
     @Override
     public void execute() {
+        if (autoAimEnabled && vision.shouldResetAimControl()) {
+            autoAim.reset();
+            if (drive.usesPoseFusion()) {
+                positionHold.reset();
+                resetFiringSequence(FiringState.WAITING);
+            }
+        }
         double forward = applyDeadband(gamepadEx.getLeftY());
         double strafe = applyDeadband(gamepadEx.getLeftX());
         manualTranslation = forward != 0.0 || strafe != 0.0;
@@ -141,7 +148,6 @@ public class ShootAssistCommand extends CommandBase {
         boolean validAimingTarget = vision.hasValidAimingTarget();
         double autoAimTurn = 0.0;
         if (autoAimEnabled) {
-            if (vision.wasCorrectionApplied()) autoAim.reset();
             autoAimTurn = autoAim.calculateTurnPower(
                     validAimingTarget && !vision.shouldPauseForAimCalibration(), vision.getYawErrorDegrees());
         }

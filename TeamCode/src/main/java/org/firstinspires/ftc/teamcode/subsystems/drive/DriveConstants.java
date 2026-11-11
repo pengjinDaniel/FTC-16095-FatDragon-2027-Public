@@ -33,6 +33,8 @@ public class DriveConstants {
     public static double maximumVisionPositionDifferenceInches = 1.0;
     public static double maximumVisionHeadingDifferenceDegrees = 5.0;
     public static int visionRejectedFramesBeforeOverride = 3;
+    // Select before INIT after validating the fusion in Limelight Aim Test Blue/Red.
+    public static volatile boolean fusedTeleOpLocalizationEnabled = false;
     public static boolean positionHoldCalibrated = true;
     public static double positionHoldKp = 0.12;
     public static double positionHoldKi = 0.0;

@@ -51,7 +51,8 @@ public abstract class TeleOpBase extends CommandOpMode {
         started = false;
         aimRequested = false;
         stopLatched = false;
-        drive = new Drive(hardwareMap);
+        drive = new Drive(hardwareMap,
+                isAutoAimEnabled() && DriveConstants.fusedTeleOpLocalizationEnabled);
         shooter = new Shooter(hardwareMap);
         intake = new Intake(hardwareMap);
         transit = new Transit(hardwareMap);
@@ -95,10 +96,7 @@ public abstract class TeleOpBase extends CommandOpMode {
                 () -> gamepadEx.getButton(GamepadKeys.Button.RIGHT_STICK_BUTTON)
         ).whenActive(intake::toggleFlower);
 
-        new Trigger(
-                () -> gamepadEx.getTrigger(GamepadKeys.Trigger.RIGHT_TRIGGER)
-                        > TeleOpConstants.triggerThreshold
-        ).whileActiveContinuous(shootAssistCommand);
+        new Trigger(() -> aimRequested).whileActiveContinuous(shootAssistCommand);
     }
 
     @Override
@@ -201,12 +199,15 @@ public abstract class TeleOpBase extends CommandOpMode {
             target += "；当前选择：" + cellLabel(selected);
         }
         telemetry.addData("应瞄准框", target);
-        // The same vision-initialized Pinpoint field pose used for CELL selection and aiming.
+        // The field pose used for CELL selection and aiming.
         telemetry.addData("场地坐标（中心0/0，X朝观众）", located
                 ? String.format(java.util.Locale.US, "X %.1f cm / Y %.1f cm / 朝向 %.1f°",
                         pose.getX(DistanceUnit.CM), pose.getY(DistanceUnit.CM), pose.getHeading(AngleUnit.DEGREES))
                 : "等待有效场地定位");
         telemetry.addData("校准", vision.getCalibrationStatus());
+        if (drive.usesPoseFusion()) {
+            telemetry.addData("融合定位", drive.getPoseFusionDiagnostics());
+        }
         double shotDistanceCm = DistanceUnit.INCH.toCm(vision.getTargetHorizontalDistanceInches());
         telemetry.addData("射击距离（车中心到CELL开口中心）", Double.isFinite(shotDistanceCm)
                 ? String.format(java.util.Locale.US, "%.1f cm", shotDistanceCm) : "等待有效距离");
