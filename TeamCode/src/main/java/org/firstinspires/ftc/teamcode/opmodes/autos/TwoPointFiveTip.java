@@ -37,7 +37,9 @@ import org.firstinspires.ftc.teamcode.subsystems.vision.Vision;
 @Config
 @Autonomous(name = "2.5Tip", group = "Auto")
 public class TwoPointFiveTip extends LinearOpMode {
-    private static final double SHOT_VELOCITY_TICKS_PER_SECOND = 1515.0;
+    private static final double SHOT_VELOCITY_TICKS_PER_SECOND = 1630.0;
+    private static final double FIRST_SHOT_VELOCITY_TICKS_PER_SECOND = 1600.0;
+    private static final double THIRD_SHOT_VELOCITY_TICKS_PER_SECOND = 1650.0;
     private static final long SHOT_DURATION_MS = 900;
     private static final long SHOT_TIMEOUT_MS = 7000;
     private static final long PATH_4_WAIT_MS = 1000;
@@ -75,17 +77,17 @@ public class TwoPointFiveTip extends LinearOpMode {
     private final Pose point3Control1 = poseFactory.of(51.1409, 111.8053, 0);
     private final Pose point3Control2 = poseFactory.of(10.2829, 48.9189, 0);
     private final Pose point3Control3 = poseFactory.of(32.2808, 107.5054, 0);
-    private final Pose point4 = poseFactory.of(46.1507, 134.6827, 90);
+    private final Pose point4 = poseFactory.of(47.8244, 128.3, 90);
     private final Pose point4Control1 = poseFactory.of(57.5688, 117.2271, 0);
     private final Pose point4Control2 = poseFactory.of(61.1741, 119.1627, 0);
     private final Pose point4Control3 = poseFactory.of(50.5966, 111.4921, 0);
     private final Pose point4Control4 = poseFactory.of(44.7229, 110.8736, 0);
-    private final Pose point5 = poseFactory.of(46.6966, 127.8097, 90);
+    private final Pose point5 = poseFactory.of(47.1531, 116.3984, 90);
     private final Pose point6 = poseFactory.of(58.0777, 121.299, 90);
     private final Pose point7Start = poseFactory.of(58.0777, 121.299, 90);
     private final Pose point7 = poseFactory.of(23.0251, 46.4503, 180);
     private final Pose point7Control1 = poseFactory.of(18.0353, 112.38, 0);
-    private final Pose point8 = poseFactory.of(6.8403, 45.9889, 180);
+    private final Pose point8 = poseFactory.of(13.38, 46.7496, 180);
     private final Pose point9 = poseFactory.of(23.0464, 46.1933, 180);
     private final Pose point10Start = poseFactory.of(23.0464, 46.1933, 180);
     private final Pose point10 = poseFactory.of(57.1782, 24.1118, 270);
@@ -135,7 +137,7 @@ public class TwoPointFiveTip extends LinearOpMode {
 
             follower = Constants.create(hardwareMap);
             intake = new Intake(hardwareMap);
-            shooter = new Shooter(hardwareMap, SHOT_VELOCITY_TICKS_PER_SECOND);
+            shooter = Shooter.withFixedShotVelocity(hardwareMap, this::shotVelocity);
             transit = new Transit(hardwareMap);
             vision = new Vision(hardwareMap, Alliance.RED);
             target = new AutoHiveTarget(vision, CellCluster.RED_OPPOSITE_AUDIENCE);
@@ -147,7 +149,7 @@ public class TwoPointFiveTip extends LinearOpMode {
                 if (activeShot != null || (pathNumber >= 7 && pathNumber != 10)) return;
                 target.update(follower.pose());
                 if (isStarted() && !isStopRequested()) {
-                    shooter.setDistanceTarget(target.getDistanceCm());
+                    setShotDistanceTarget();
                 }
             });
 
@@ -290,6 +292,11 @@ public class TwoPointFiveTip extends LinearOpMode {
         return new AutoShootCommand(follower, shooter, intake, transit, target,
                 this::localizationReady, SHOT_DURATION_MS, SHOT_TIMEOUT_MS, false) {
             @Override
+            protected boolean applyShooterTarget() {
+                return setShotDistanceTarget();
+            }
+
+            @Override
             public void initialize() {
                 activeShot = this;
                 shotAttempt++;
@@ -324,11 +331,27 @@ public class TwoPointFiveTip extends LinearOpMode {
         lastShotLogNanos = System.nanoTime();
         lastShotDiagnostics = String.format(Locale.US,
                 "shot=%d path=%d mode=%s fixedTarget=%.1f distance=%.1f target=%.1f actual=%.1f raw=%.3f applied=%.3f ready=%s status=%s",
-                shotAttempt, pathNumber, shooter.getControlMode(), SHOT_VELOCITY_TICKS_PER_SECOND,
+                shotAttempt, pathNumber, shooter.getControlMode(), shotVelocity(),
                 target.getDistanceCm(), shooter.getTargetVelocity(), shooter.getRightVelocity(),
                 shooter.getRightPidOutput(), shooter.getRightPower(), shooter.isReady(),
                 activeShot == null ? lastShotResult : activeShot.getStatus());
         RobotLog.ii("TwoPointFiveTip", "%s", lastShotDiagnostics);
+    }
+
+    private double shotVelocity() {
+        if (pathNumber <= 1) return FIRST_SHOT_VELOCITY_TICKS_PER_SECOND;
+        if (pathNumber >= 4 && pathNumber <= 6) return THIRD_SHOT_VELOCITY_TICKS_PER_SECOND;
+        return SHOT_VELOCITY_TICKS_PER_SECOND;
+    }
+
+    private boolean setShotDistanceTarget() {
+        if (!Double.isFinite(target.getDistanceCm())) {
+            shooter.stop();
+            return false;
+        }
+        // The third shot uses the fourth planned shooting position's pitch calibration.
+        double pitchDistanceCm = pathNumber == 6 ? target.distanceCmAt(point10) : target.getDistanceCm();
+        return shooter.setDistanceTarget(pitchDistanceCm);
     }
 
     private void showTelemetry() {
@@ -340,7 +363,7 @@ public class TwoPointFiveTip extends LinearOpMode {
         telemetry.addData("Last shot details", lastShotDiagnostics);
         telemetry.addData("Shot CELL", target.getCluster());
         telemetry.addData("Shot distance (cm)", target.getDistanceCm());
-        telemetry.addData("Fixed shot target (ticks/s)", SHOT_VELOCITY_TICKS_PER_SECOND);
+        telemetry.addData("Fixed shot target (ticks/s)", shotVelocity());
         if (activeShot != null) {
             telemetry.addData("Shooter target / actual (ticks/s)", "%.0f / %.0f",
                     shooter.getTargetVelocity(), shooter.getRightVelocity());

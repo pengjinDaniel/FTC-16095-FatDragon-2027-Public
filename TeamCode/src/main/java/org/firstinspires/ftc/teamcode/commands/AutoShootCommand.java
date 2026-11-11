@@ -88,7 +88,7 @@ public class AutoShootCommand extends CommandBase {
         }
 
         target.update(pose);
-        if (!shooter.setDistanceTarget(target.getDistanceCm())) {
+        if (!applyShooterTarget()) {
             stopForInvalidTarget("Waiting for a valid shot target");
             return;
         }
@@ -148,6 +148,10 @@ public class AutoShootCommand extends CommandBase {
 
     public boolean hasTimedOut() {
         return timedOut;
+    }
+
+    protected boolean applyShooterTarget() {
+        return shooter.setDistanceTarget(target.getDistanceCm());
     }
 
     private void stopForInvalidTarget(String reason) {

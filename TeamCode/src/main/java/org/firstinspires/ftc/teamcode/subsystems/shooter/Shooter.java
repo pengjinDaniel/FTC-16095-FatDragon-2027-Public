@@ -21,7 +21,7 @@ public class Shooter extends SubsystemBase {
     private final PIDFController rightController;
     private final DoubleSupplier distanceVelocityScale;
     // Zero keeps distance-based velocity; positive values override velocity only, not pitch.
-    private final double fixedDistanceTargetVelocity;
+    private final DoubleSupplier fixedDistanceTargetVelocity;
 
     private double targetVelocity = Double.NaN;
     private double velocitySettleReferenceTarget = Double.NaN;
@@ -43,12 +43,23 @@ public class Shooter extends SubsystemBase {
 
     /** Per-instance scaling for distance-based targets; direct velocity/fixed-power tests are unchanged. */
     public Shooter(HardwareMap hardwareMap, DoubleSupplier distanceVelocityScale) {
-        this(hardwareMap, distanceVelocityScale, 0.0);
+        this(hardwareMap, distanceVelocityScale, () -> 0.0);
     }
 
     /** Fixed encoder velocity for all distance-based shots; pitch still follows distance. */
     public Shooter(HardwareMap hardwareMap, double fixedVelocityTicksPerSecond) {
-        this(hardwareMap, () -> 1.0, requirePositiveVelocity(fixedVelocityTicksPerSecond));
+        this(hardwareMap, () -> 1.0, constantVelocity(fixedVelocityTicksPerSecond));
+    }
+
+    /** Allows an autonomous routine to select its fixed velocity for each approach. */
+    public static Shooter withFixedShotVelocity(HardwareMap hardwareMap, DoubleSupplier velocity) {
+        Objects.requireNonNull(velocity);
+        return new Shooter(hardwareMap, () -> 1.0, () -> requirePositiveVelocity(velocity.getAsDouble()));
+    }
+
+    private static DoubleSupplier constantVelocity(double velocity) {
+        double validatedVelocity = requirePositiveVelocity(velocity);
+        return () -> validatedVelocity;
     }
 
     private static double requirePositiveVelocity(double velocity) {
@@ -59,7 +70,7 @@ public class Shooter extends SubsystemBase {
     }
 
     private Shooter(HardwareMap hardwareMap, DoubleSupplier distanceVelocityScale,
-                    double fixedDistanceTargetVelocity) {
+                    DoubleSupplier fixedDistanceTargetVelocity) {
         this.distanceVelocityScale = Objects.requireNonNull(distanceVelocityScale);
         this.fixedDistanceTargetVelocity = fixedDistanceTargetVelocity;
         leftShooter = hardwareMap.get(DcMotorEx.class, ShooterConstants.leftShooterName);
@@ -137,8 +148,8 @@ public class Shooter extends SubsystemBase {
             double pitch = (1.0 - fraction) * lower[2] + fraction * upper[2];
             setPitchPosition(pitch);
         }
-        setTargetVelocity(fixedDistanceTargetVelocity > 0.0
-                ? fixedDistanceTargetVelocity : velocity * scale);
+        double fixedVelocity = fixedDistanceTargetVelocity.getAsDouble();
+        setTargetVelocity(fixedVelocity > 0.0 ? fixedVelocity : velocity * scale);
         return hasTargetVelocity();
     }
 
