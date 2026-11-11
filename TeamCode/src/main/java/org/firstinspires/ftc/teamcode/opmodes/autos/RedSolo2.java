@@ -33,10 +33,7 @@ import org.firstinspires.ftc.teamcode.subsystems.vision.Vision;
 @Config
 @Autonomous(name = "RedSolo2", group = "Auto")
 public class RedSolo2 extends LinearOpMode {
-    // Fractions of the distance-calibrated target velocity; tune independently in Dashboard.
-    public static double firstShotVelocityScale = 0.98;
-    public static double secondShotVelocityScale = 0.93;
-    public static double thirdShotVelocityScale = 0.93;
+    private static final double SHOT_VELOCITY_TICKS_PER_SECOND = 1515.0;
     private static final long SHOT_DURATION_MS = 900;
     private static final long SHOT_TIMEOUT_MS = 7000;
     private static final long PATH_4_WAIT_MS = 1000;
@@ -112,7 +109,7 @@ public class RedSolo2 extends LinearOpMode {
 
             follower = Constants.create(hardwareMap);
             intake = new Intake(hardwareMap);
-            shooter = new Shooter(hardwareMap, this::getShotVelocityScale);
+            shooter = new Shooter(hardwareMap, SHOT_VELOCITY_TICKS_PER_SECOND);
             transit = new Transit(hardwareMap);
             vision = new Vision(hardwareMap, Alliance.RED);
             target = new AutoHiveTarget(vision, CellCluster.RED_OPPOSITE_AUDIENCE);
@@ -255,12 +252,6 @@ public class RedSolo2 extends LinearOpMode {
         follower.drivetrain.stop();
     }
 
-    private double getShotVelocityScale() {
-        if (pathNumber <= 1) return firstShotVelocityScale;
-        if (pathNumber <= 3) return secondShotVelocityScale;
-        return thirdShotVelocityScale;
-    }
-
     private Command shoot(boolean deployFlower) {
         return new AutoShootCommand(follower, shooter, intake, transit, target,
                 this::localizationReady, SHOT_DURATION_MS, SHOT_TIMEOUT_MS, false) {
@@ -290,7 +281,7 @@ public class RedSolo2 extends LinearOpMode {
         telemetry.addData("Shot", activeShot == null ? lastShotResult : activeShot.getStatus());
         telemetry.addData("Shot CELL", target.getCluster());
         telemetry.addData("Shot distance (cm)", target.getDistanceCm());
-        telemetry.addData("Shot velocity scale", getShotVelocityScale());
+        telemetry.addData("Fixed shot target (ticks/s)", SHOT_VELOCITY_TICKS_PER_SECOND);
         if (activeShot != null) {
             telemetry.addData("Shooter target / actual (ticks/s)", "%.0f / %.0f",
                     shooter.getTargetVelocity(), shooter.getRightVelocity());
