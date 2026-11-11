@@ -7,16 +7,19 @@ import com.acmerobotics.dashboard.config.variable.CustomVariable;
 import com.acmerobotics.dashboard.config.variable.VariableType;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.DcMotorEx;
+import com.qualcomm.robotcore.hardware.DcMotorSimple;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 import java.lang.reflect.Proxy;
 import java.util.Arrays;
-import java.util.LinkedHashMap;
-import java.util.Map;
-import org.firstinspires.ftc.robotcore.external.Telemetry;
+import org.firstinspires.ftc.teamcode.subsystems.tuning.DashboardTuner;
 
-/** Replays Dashboard array updates and DashTuner motor binding without robot hardware. */
+/**
+ * Replays Dashboard array updates and the Spinup-style DashboardTuner without robot hardware.
+ * Fake devices: leftShooterMotor (no encoder), rightShooterMotor (encoder), leftFrontMotor.
+ */
 public class DashTunerCheck {
     private static int checks;
+    private static final String[] NAMES = {"leftShooterMotor", "rightShooterMotor", "leftFrontMotor"};
 
     private static void check(boolean condition, String message) {
         checks++;
@@ -28,23 +31,31 @@ public class DashTunerCheck {
     }
 
     private static final class Fixture {
-        final DashTuner op = new DashTuner();
-        final double[] power = {0, 0};
-        final DcMotor.RunMode[] mode = {
-                DcMotor.RunMode.RUN_USING_ENCODER, DcMotor.RunMode.RUN_USING_ENCODER
-        };
-        final Map<String, Object> telemetry = new LinkedHashMap<>();
+        final double[] power = new double[NAMES.length];
+        final double[] velocity = new double[NAMES.length];
+        final double[] velocityTarget = new double[NAMES.length];
+        final DcMotor.RunMode[] mode = new DcMotor.RunMode[NAMES.length];
+        final DcMotorSimple.Direction[] direction = new DcMotorSimple.Direction[NAMES.length];
+        final DcMotorEx[] motors = new DcMotorEx[NAMES.length];
         final CustomVariable config;
+        final DashboardTuner tuner;
 
         Fixture() {
-            Arrays.fill(DashTuner.motorName, "");
-            Arrays.fill(DashTuner.servoName, "");
-            Arrays.fill(DashTuner.colorSensorName, "");
-            Arrays.fill(DashTuner.motorTarget, 0);
-            Arrays.fill(DashTuner.slaveTo, -1);
-            Arrays.fill(DashTuner.motorMode, DashTuner.MotorMode.POWER);
-            config = ReflectionConfig.createVariableFromClass(DashTuner.class);
-            DcMotorEx[] motors = new DcMotorEx[2];
+            Arrays.fill(DashboardTuner.motorName, "");
+            Arrays.fill(DashboardTuner.servoName, "");
+            Arrays.fill(DashboardTuner.colorSensorName, "");
+            Arrays.fill(DashboardTuner.motorTarget, 0);
+            Arrays.fill(DashboardTuner.servoTarget, -1);
+            Arrays.fill(DashboardTuner.slaveTo, -1);
+            Arrays.fill(DashboardTuner.slavePowerScale, 1);
+            Arrays.fill(DashboardTuner.isPositionCloseLoop, false);
+            Arrays.fill(DashboardTuner.isVelocityCloseLoop, false);
+            Arrays.fill(DashboardTuner.kP, 0);
+            Arrays.fill(DashboardTuner.kI, 0);
+            Arrays.fill(DashboardTuner.kD, 0);
+            Arrays.fill(DashboardTuner.kF, 0);
+            Arrays.fill(mode, DcMotor.RunMode.RUN_USING_ENCODER);
+            config = ReflectionConfig.createVariableFromClass(DashboardTuner.class);
             for (int i = 0; i < motors.length; i++) {
                 final int index = i;
                 motors[i] = (DcMotorEx) Proxy.newProxyInstance(DcMotorEx.class.getClassLoader(),
@@ -54,98 +65,104 @@ public class DashTunerCheck {
                                 case "getPower": return power[index];
                                 case "setMode": mode[index] = (DcMotor.RunMode) args[0]; return null;
                                 case "getMode": return mode[index];
-                                case "getVelocity": return 0.0;
+                                case "setDirection": direction[index] = (DcMotorSimple.Direction) args[0]; return null;
+                                case "getVelocity": return velocity[index];
+                                case "setVelocity": velocityTarget[index] = (double) args[0]; return null;
+                                case "setPIDFCoefficients": return null;
                                 case "getCurrentPosition": return 0;
+                                case "equals": return proxy == args[0];
+                                case "hashCode": return System.identityHashCode(proxy);
                                 default: throw new AssertionError("Unexpected motor call: " + method);
                             }
                         });
             }
             // SDK lookup accesses Android's AppUtil; simulate only the hardware lookup boundary.
-            op.hardwareMap = new HardwareMap(null, null) {
+            HardwareMap map = new HardwareMap(null, null) {
                 @Override public <T> T tryGet(Class<? extends T> type, String name) {
-                    int index = name.equals("leftShooterMotor") ? 0 : name.equals("rightShooterMotor") ? 1 : -1;
+                    int index = Arrays.asList(NAMES).indexOf(name);
                     return index >= 0 && type.isInstance(motors[index]) ? type.cast(motors[index]) : null;
                 }
             };
-            op.telemetry = (Telemetry) Proxy.newProxyInstance(Telemetry.class.getClassLoader(),
-                    new Class<?>[]{Telemetry.class}, (proxy, method, args) -> {
-                        if (method.getName().equals("addData")) telemetry.put((String) args[0], args[1]);
-                        return method.getReturnType() == boolean.class ? true : null;
-                    });
+            tuner = new DashboardTuner(map);
         }
 
-        void save(String name, double target) {
+        /** Same config-tree update used by Dashboard's SAVE_CONFIG handler. */
+        void save(int channel, String name, double target) {
             CustomVariable names = new CustomVariable();
-            names.putVariable("0", new BasicVariable<>(VariableType.STRING, new ConstantProvider<>(name)));
+            names.putVariable(String.valueOf(channel),
+                    new BasicVariable<>(VariableType.STRING, new ConstantProvider<>(name)));
             CustomVariable targets = new CustomVariable();
-            targets.putVariable("0", new BasicVariable<>(VariableType.DOUBLE, new ConstantProvider<>(target)));
+            targets.putVariable(String.valueOf(channel),
+                    new BasicVariable<>(VariableType.DOUBLE, new ConstantProvider<>(target)));
             CustomVariable diff = new CustomVariable();
             diff.putVariable("motorName", names);
             diff.putVariable("motorTarget", targets);
-            config.update(diff); // Same config-tree update used by Dashboard's SAVE_CONFIG handler.
-            check(DashTuner.motorName[0].equals(name), "Dashboard writes the motor-name array");
-            near(DashTuner.motorTarget[0], target, "Dashboard writes the motor-target array");
+            config.update(diff);
+            check(DashboardTuner.motorName[channel].equals(name), "Dashboard writes the motor-name array");
+            near(DashboardTuner.motorTarget[channel], target, "Dashboard writes the motor-target array");
         }
     }
 
     public static void main(String[] args) {
-        Fixture beforeInit = new Fixture();
-        beforeInit.save("leftShooterMotor", 0.25);
-        beforeInit.op.init();
-        beforeInit.op.init_loop();
-        near(beforeInit.power[0], 0, "INIT keeps configured motor stopped");
-        beforeInit.op.start();
-        beforeInit.op.loop();
-        near(beforeInit.power[0], 0.25, "configuration saved before INIT works");
-        check(beforeInit.mode[0] == DcMotor.RunMode.RUN_WITHOUT_ENCODER,
-                "POWER mode works with an encoderless motor");
-        beforeInit.op.stop();
-        near(beforeInit.power[0], 0, "STOP stops a configured motor");
+        // Power mode, live retarget, rename and misspelling.
+        Fixture f = new Fixture();
+        f.save(0, "leftFrontMotor", 0.25);
+        f.tuner.applyTargets();
+        near(f.power[2], 0.25, "power mode drives the named motor");
+        check(f.direction[2] == DcMotorSimple.Direction.REVERSE, "drive direction matches DriveConstants");
+        check(f.mode[2] == DcMotor.RunMode.RUN_WITHOUT_ENCODER, "power mode runs without encoder");
+        f.save(0, "leftFrontMotor", 0.4);
+        f.tuner.applyTargets();
+        near(f.power[2], 0.4, "live power updates apply");
+        f.save(0, "rightShooterMotor", 0.3);
+        f.tuner.applyTargets();
+        near(f.power[2], 0, "changing the hardware name stops the previous motor");
+        near(f.power[1], 0.3, "changing the hardware name binds the new motor");
+        f.save(0, "leftShootermotor", 0.25);
+        f.tuner.applyTargets();
+        near(f.power[1], 0, "a misspelled name stops the old motor and runs nothing");
 
-        Fixture atStart = new Fixture();
-        atStart.op.init();
-        atStart.op.init_loop();
-        atStart.save("leftShooterMotor", 0.25);
-        atStart.op.start();
-        atStart.op.loop();
-        near(atStart.power[0], 0.25, "configuration saved after the last INIT callback applies on START");
-        atStart.op.stop();
+        // Shooter: right encoder leader, left follower copies the leader power.
+        Fixture s = new Fixture();
+        DashboardTuner.motorName[0] = "rightShooterMotor";
+        DashboardTuner.motorName[1] = "leftShooterMotor";
+        DashboardTuner.slaveTo[1] = 0;
+        DashboardTuner.isVelocityCloseLoop[0] = true;
+        DashboardTuner.kP[0] = 0.001;
+        DashboardTuner.kF[0] = 0.0003;
+        DashboardTuner.motorTarget[0] = 1500;
+        s.velocity[1] = 1000;
+        s.tuner.applyTargets();
+        check(s.direction[0] == DcMotorSimple.Direction.FORWARD
+                && s.direction[1] == DcMotorSimple.Direction.REVERSE, "shooter directions match ShooterConstants");
+        check(s.power[1] > 0, "leader drives positive power below target");
+        near(s.power[0], s.power[1], "encoder-less follower copies leader power");
+        near(s.velocityTarget[0], 0, "follower never runs its own velocity loop");
 
-        Fixture running = new Fixture();
-        running.op.init();
-        running.op.start();
-        running.save("leftShooterMotor", 0.25);
-        running.op.loop();
-        near(running.power[0], 0.25, "configuration saved after START binds the motor");
-        check(running.telemetry.get("Motor 0 config").toString().contains("target=0.25"),
-                "Driver Station shows the received target");
-        check(running.telemetry.get("Motor 0 config").toString().contains("leftShooterMotor"),
-                "Driver Station shows the received hardware name");
-        check(running.telemetry.get("DashTuner state").toString().startsWith("RUNNING"),
-                "Driver Station shows the running state");
-        check(running.telemetry.get("DashTuner version").toString().startsWith("DashTuner-"),
-                "Driver Station identifies the deployed version");
-        running.save("leftShooterMotor", 0.4);
-        running.op.loop();
-        near(running.power[0], 0.4, "live power updates still apply");
-        running.save("rightShooterMotor", 0.3);
-        running.op.loop();
-        near(running.power[0], 0, "changing the hardware name stops the previous motor");
-        near(running.power[1], 0.3, "changing the hardware name binds the new motor");
-        running.save("", 0.3);
-        running.op.loop();
-        near(running.power[1], 0, "clearing the hardware name stops and unbinds the motor");
-        running.save("leftShootermotor", 0.25);
-        running.op.loop();
-        near(running.power[0], 0, "a misspelled hardware name cannot run a different motor");
-        check(running.telemetry.get("Motor 0").toString().startsWith("Not found:"),
-                "a missing motor has a visible error");
-        running.save("leftShooterMotor", 0.25);
-        running.op.loop();
-        near(running.power[0], 0.25, "correcting a hardware name takes effect while running");
-        running.op.stop();
-        near(running.power[0], 0, "STOP stops the rebound motor");
-        near(running.power[1], 0, "STOP leaves the previous motor stopped");
+        // Encoder-less leftShooterMotor cannot run a closed loop on its own.
+        DashboardTuner.slaveTo[1] = -1;
+        DashboardTuner.motorName[0] = "";
+        DashboardTuner.isVelocityCloseLoop[1] = true;
+        DashboardTuner.kP[1] = 0.001;
+        DashboardTuner.motorTarget[1] = 1500;
+        s.tuner.applyTargets();
+        near(s.power[0], 0, "leftShooterMotor closed loop is blocked");
+        near(s.power[1], 0, "unbinding the leader stops it");
+
+        // Position and velocity both selected is rejected instead of falling into power mode.
+        DashboardTuner.motorName[1] = "rightShooterMotor";
+        DashboardTuner.isPositionCloseLoop[1] = true;
+        s.tuner.applyTargets();
+        near(s.power[1], 0, "conflicting modes stop the motor");
+
+        DashboardTuner.isPositionCloseLoop[1] = false;
+        DashboardTuner.isVelocityCloseLoop[1] = false;
+        DashboardTuner.motorTarget[1] = 0.5;
+        s.tuner.applyTargets();
+        near(s.power[1], 0.5, "back to power mode");
+        s.tuner.stop();
+        for (double p : s.power) near(p, 0, "STOP zeroes every bound motor");
+        Arrays.fill(DashboardTuner.motorName, "");
         System.out.println("PASS DashTunerCheck: " + checks + " assertions");
     }
 }

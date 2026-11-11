@@ -66,10 +66,19 @@ public class AutoHiveTarget {
         if (target != null) {
             yawErrorDegrees = VisionMath.coordinateYawErrorDegrees(fieldPose,
                     target[0], target[1], VisionConstants.shooterYawDegrees);
-            distanceCm = DistanceUnit.INCH.toCm(Math.hypot(
-                    target[0] - fieldPose.getX(DistanceUnit.INCH),
-                    target[1] - fieldPose.getY(DistanceUnit.INCH)));
+            distanceCm = distanceToCellCm(fieldPose, target);
         }
+    }
+
+    public double distanceCmAt(Pose pedroPose) {
+        double[] target = fieldTarget();
+        return target == null ? Double.NaN : distanceToCellCm(toHiveFieldPose(pedroPose), target);
+    }
+
+    private static double distanceToCellCm(Pose2D fieldPose, double[] target) {
+        return DistanceUnit.INCH.toCm(Math.hypot(
+                target[0] - fieldPose.getX(DistanceUnit.INCH),
+                target[1] - fieldPose.getY(DistanceUnit.INCH)));
     }
 
     private double[] fieldTarget() {
