@@ -9,7 +9,7 @@ public class TransitConstants {
     public static DcMotorSimple.Direction transitMotorDirection = DcMotorSimple.Direction.REVERSE;
     public static double forwardPower = 0.6;
     public static double intakeReverseForwardPower = 0.6;
-    public static double feedPower = 0.55;
+    public static double feedPower = 0.65;
     public static double reversePower = -0.7;
     public static String limitServoName = "limitServo";
     public static boolean limitPositionsCalibrated = true;

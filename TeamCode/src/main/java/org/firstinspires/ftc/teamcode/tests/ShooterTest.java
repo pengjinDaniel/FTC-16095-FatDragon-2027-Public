@@ -99,7 +99,7 @@ public class ShooterTest extends OpMode {
         packet.put("stopLatched", stopLatched);
         dashboard.sendTelemetryPacket(packet);
 
-        telemetry.addLine("ShooterConstants: center/wall plus additionalShotPoints {cm, ticks/s, servo position}. Same PID as Blue/Red.");
+        telemetry.addLine("ShooterConstants: nearShotPoints / farShotPoints {cm, ticks/s, servo position}. Same PID as Blue/Red.");
         telemetry.addLine("Set ShooterTest.alliance before INIT. Drive stays stopped; aim manually.");
         telemetry.addLine("RT: distance-based shot. Release RT: shared standby power. B stops until RT is released.");
         telemetry.addData("Alliance", vision.getAlliance());

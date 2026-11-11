@@ -257,6 +257,7 @@ public class VisionCalibrationCheck {
         direct.drive.periodic();
         check(direct.drive.updateVisionPose(pose(0, 0, 180), 3, 5), "a ready Pinpoint can establish a new field frame");
         checkHeadlessAndTagLossShooting();
+        checkHeadlessThroughPeriodicBadRead();
         System.out.println("PASS VisionCalibrationCheck: " + checks
                 + " direct overwrite, metadata, field registration, headless and tag-loss assertions");
     }
@@ -348,4 +349,37 @@ public class VisionCalibrationCheck {
         close(drive.strafe, -.4, "missing heading uses robot-relative manual fallback");
     }
 
+    private static void checkHeadlessThroughPeriodicBadRead() throws Exception {
+        Samples sample = new Samples();
+        CaptureDrive drive = (CaptureDrive) ALLOCATOR.allocateInstance(CaptureDrive.class);
+        set(drive, Drive.class, "pinpoint", sample.pinpoint);
+        drive.resetDriverHeading();
+        sample.pinpoint.position = pose(0, 0, 180);
+        drive.periodic();
+
+        sample.pinpoint.status = com.qualcomm.hardware.gobilda.GoBildaPinpointDriver.DeviceStatus.FAULT_BAD_READ;
+        drive.periodic();
+        drive.moveFieldCentric(.6, .25, .1);
+        close(drive.forward, -.6, "a brief periodic bad read keeps field-relative forward");
+        close(drive.strafe, -.25, "a brief periodic bad read keeps field-relative strafe");
+        close(drive.turn, .1, "the cached angle leaves turn input intact");
+
+        set(drive, Drive.class, "lastValidDriverHeadingNanos", System.nanoTime() - 101_000_000L);
+        drive.periodic();
+        drive.moveFieldCentric(.6, .25, .1);
+        close(drive.forward, .6, "expired heading uses the existing fallback");
+        close(drive.strafe, .25, "expired heading cannot steer field-relative strafe");
+
+        sample.pinpoint.status = com.qualcomm.hardware.gobilda.GoBildaPinpointDriver.DeviceStatus.READY;
+        drive.periodic();
+        drive.moveFieldCentric(.6, .25, .1);
+        close(drive.forward, -.6, "READY resumes the original driver reference");
+        close(drive.strafe, -.25, "READY resumes field-relative strafe");
+
+        sample.pinpoint.failAfterPoseWrite = true;
+        check(!drive.updateVisionPose(pose(0, 0, 0), 1, 0), "vision write readback fails");
+        drive.moveFieldCentric(.6, .25, .1);
+        close(drive.forward, .6, "a write readback fault cannot use the periodic cache");
+        close(drive.strafe, .25, "a write readback fault keeps the existing fallback");
+    }
 }

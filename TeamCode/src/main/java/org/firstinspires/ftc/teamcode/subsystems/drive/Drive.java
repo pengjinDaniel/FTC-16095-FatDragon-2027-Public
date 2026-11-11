@@ -18,6 +18,8 @@ import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.UnnormalizedAngleUnit;
 
 public class Drive extends SubsystemBase {
+    private static final long DRIVER_HEADING_HOLD_NANOS = 100_000_000L;
+
     public final DcMotorEx leftFrontMotor;
     public final DcMotorEx leftBackMotor;
     public final DcMotorEx rightFrontMotor;
@@ -39,6 +41,9 @@ public class Drive extends SubsystemBase {
     private long lastPinpointBadReadNanos;
     private String lastPinpointBadReadReason = "No bad reads";
     private double driverHeadingReferenceRadians = Double.NaN;
+    private boolean periodicBadRead;
+    private double lastValidDriverHeadingRadians = Double.NaN;
+    private long lastValidDriverHeadingNanos;
     private double lastVisionTimestamp = Double.NaN;
     private double lastProcessedVisionTimestamp = Double.NaN;
     private int rejectedVisionFrameCount;
@@ -76,7 +81,8 @@ public class Drive extends SubsystemBase {
     @Override
     public void periodic() {
         long readStarted = readPinpoint("periodic");
-        if (pinpoint.getDeviceStatus() == GoBildaPinpointDriver.DeviceStatus.FAULT_BAD_READ) {
+        periodicBadRead = pinpoint.getDeviceStatus() == GoBildaPinpointDriver.DeviceStatus.FAULT_BAD_READ;
+        if (periodicBadRead) {
             // Preserve the field registration while the interrupted read awaits validation.
             localizationStatus = "Pinpoint bad read; waiting for valid odometry";
             return;
@@ -126,6 +132,8 @@ public class Drive extends SubsystemBase {
         if (!Double.isFinite(driverHeadingReferenceRadians)) {
             resetDriverHeading();
         }
+        lastValidDriverHeadingRadians = getDriverHeadingRadians();
+        lastValidDriverHeadingNanos = readStarted;
         pinpointBadReadStreak = 0;
     }
 
@@ -335,6 +343,7 @@ public class Drive extends SubsystemBase {
         lastProcessedVisionTimestamp = Double.NaN;
         resetVisionRejectionSequence();
         driverHeadingReferenceRadians = Double.NaN;
+        lastValidDriverHeadingRadians = Double.NaN;
         localizationStatus = reason;
     }
 
@@ -369,6 +378,7 @@ public class Drive extends SubsystemBase {
     public void resetDriverHeading() {
         driverHeadingReferenceRadians = pinpoint.getDeviceStatus() == GoBildaPinpointDriver.DeviceStatus.READY
                 ? pinpoint.getHeading(AngleUnit.RADIANS) : Double.NaN;
+        lastValidDriverHeadingRadians = Double.NaN;
     }
 
     public double getDriverHeadingRadians() {
@@ -386,6 +396,12 @@ public class Drive extends SubsystemBase {
             return;
         }
         double heading = getDriverHeadingRadians();
+        // A brief periodic fault can reuse the last valid angle for manual translation.
+        if (!Double.isFinite(heading) && periodicBadRead
+                && pinpoint.getDeviceStatus() == GoBildaPinpointDriver.DeviceStatus.FAULT_BAD_READ
+                && System.nanoTime() - lastValidDriverHeadingNanos <= DRIVER_HEADING_HOLD_NANOS) {
+            heading = lastValidDriverHeadingRadians;
+        }
         if (!Double.isFinite(heading)) {
             moveRobot(forward, strafe, turn);
             return;

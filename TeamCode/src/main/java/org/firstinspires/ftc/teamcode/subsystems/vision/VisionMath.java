@@ -118,20 +118,6 @@ final class VisionMath {
         };
     }
 
-    static double[] tagClusterCenterForHiveTilt(CellCluster cluster, double hiveAngleDegrees) {
-        double[][] centers = VisionConstants.tagClusterCenterFieldXYInches;
-        if (cluster == null || centers == null || cluster.getTuningIndex() >= centers.length) {
-            return null;
-        }
-        double[] center = centers[cluster.getTuningIndex()];
-        if (center == null || center.length < 2) return null;
-        double angle = Double.isNaN(hiveAngleDegrees)
-                ? -Math.copySign(VisionConstants.cellTargetReferenceTiltDegrees, center[0])
-                : hiveAngleDegrees;
-        return cellTargetForHiveTilt(center, VisionConstants.tagClusterCenterReferenceHeightInches,
-                VisionConstants.hivePivotHeightInches, 0.0, angle);
-    }
-
     static final class HiveSolveResult {
         final double[] candidatePhiDegrees = {Double.NaN, Double.NaN};
         final double[] candidateLevelErrorsDegrees = {Double.NaN, Double.NaN};

@@ -84,7 +84,6 @@ public class PracticeBlueCheck {
         TestVision() { super(null, Alliance.BLUE); }
         @Override public boolean hasValidAimingTarget() { return valid; }
         @Override public double getTargetHorizontalDistanceInches() { return 400.0 / 2.54; }
-        @Override public double getTagCenterHorizontalDistanceInches() { return 200.0 / 2.54; }
         @Override public double getYawErrorDegrees() { return 90.0; }
     }
 

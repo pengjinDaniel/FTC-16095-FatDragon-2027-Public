@@ -61,7 +61,6 @@ public class Vision extends SubsystemBase {
     private boolean validAimingTarget;
     private boolean validShootingTarget;
     private double targetHorizontalDistanceInches = Double.NaN;
-    private double tagCenterHorizontalDistanceInches = Double.NaN;
     private double yawErrorDegrees = Double.NaN;
     private double targetXInches = Double.NaN;
     private double targetYInches = Double.NaN;
@@ -243,7 +242,6 @@ public class Vision extends SubsystemBase {
         targetYInches = Double.NaN;
         desiredHeadingDegrees = Double.NaN;
         targetHorizontalDistanceInches = Double.NaN;
-        tagCenterHorizontalDistanceInches = Double.NaN;
         yawErrorDegrees = Double.NaN;
         if (rtAimRequested && rtStopLatched) {
             targetStatus = "B stop latched; release RT to resume";
@@ -269,13 +267,6 @@ public class Vision extends SubsystemBase {
         double dx = targetXInches - robotPose.getX(DistanceUnit.INCH);
         double dy = targetYInches - robotPose.getY(DistanceUnit.INCH);
         targetHorizontalDistanceInches = Math.hypot(dx, dy);
-        double[] tagCenter = VisionMath.tagClusterCenterForHiveTilt(selectedCluster,
-                hasKnownHiveAngle ? lastKnownHiveAngleDegrees : Double.NaN);
-        if (tagCenter != null) {
-            tagCenterHorizontalDistanceInches = Math.hypot(
-                    tagCenter[0] - robotPose.getX(DistanceUnit.INCH),
-                    tagCenter[1] - robotPose.getY(DistanceUnit.INCH));
-        }
         desiredHeadingDegrees = Math.IEEEremainder(
                 Math.toDegrees(Math.atan2(dy, dx)) - VisionConstants.shooterYawDegrees, 360.0);
         yawErrorDegrees = VisionMath.coordinateYawErrorDegrees(
@@ -383,7 +374,6 @@ public class Vision extends SubsystemBase {
     public boolean hasValidAimingTarget() { return validAimingTarget; }
     public boolean hasValidShootingTarget() { return validShootingTarget; }
     public double getTargetHorizontalDistanceInches() { return targetHorizontalDistanceInches; }
-    public double getTagCenterHorizontalDistanceInches() { return tagCenterHorizontalDistanceInches; }
     public double getYawErrorDegrees() { return yawErrorDegrees; }
     public Alliance getAlliance() { return alliance; }
     public HiveState getTargetHiveState() { return targetHiveState; }
@@ -401,7 +391,6 @@ public class Vision extends SubsystemBase {
         clearCurrentFrame();
         validAimingTarget = false;
         validShootingTarget = false;
-        tagCenterHorizontalDistanceInches = Double.NaN;
     }
 
     private void clearCurrentFrame() {

@@ -70,13 +70,14 @@ public class ShooterDistanceCheck {
         ShooterConstants.maxPower = 1.0;
         ShooterConstants.pitchMinPosition = 0.0;
         ShooterConstants.pitchMaxPosition = 0.55;
-        ShooterConstants.centerDistanceCm = 100.0;
-        ShooterConstants.centerVelocityTicksPerSecond = 1000.0;
-        ShooterConstants.centerPitchPosition = 0.4;
-        ShooterConstants.wallDistanceCm = 300.0;
-        ShooterConstants.wallVelocityTicksPerSecond = 2000.0;
-        ShooterConstants.wallPitchPosition = 0.2;
-        ShooterConstants.additionalShotPoints = new double[0][];
+        ShooterConstants.nearShotPoints = new double[][]{
+                {100.0, 1000.0, 0.4}, {110.0, 1050.0, 0.39}, {120.0, 1100.0, 0.38},
+                {130.0, 1150.0, 0.37}, {140.0, 1200.0, 0.36}
+        };
+        ShooterConstants.farShotPoints = new double[][]{
+                {220.0, 1600.0, 0.28}, {240.0, 1700.0, 0.26}, {260.0, 1800.0, 0.24},
+                {280.0, 1900.0, 0.22}, {300.0, 2000.0, 0.2}
+        };
         ShooterConstants.velocityControlCalibrated = true;
         ShooterConstants.kP = 0.001;
         ShooterConstants.kI = 0.0;
@@ -111,51 +112,70 @@ public class ShooterDistanceCheck {
     private static void multiPointShots() throws Exception {
         Shooter shooter = shooter();
         configure();
-        ShooterConstants.additionalShotPoints = new double[][]{
-                {250.0, 1950.0, 0.22}, {150.0, 1100.0, 0.36}, {200.0, 1700.0, 0.3}
+        ShooterConstants.nearShotPoints = new double[][]{
+                {100.0, 1000.0, 0.4}, {110.0, 1020.0, 0.392}, {120.0, 1040.0, 0.384},
+                {130.0, 1060.0, 0.376}, {150.0, 1100.0, 0.36}
         };
-        check(Shooter.areDistanceShotValuesValid(), "unsorted calibration points accepted");
+        ShooterConstants.farShotPoints = new double[][]{
+                {200.0, 1700.0, 0.3}, {225.0, 1825.0, 0.26}, {250.0, 1950.0, 0.22},
+                {275.0, 1975.0, 0.21}, {300.0, 2000.0, 0.2}
+        };
+        check(Shooter.areDistanceShotValuesValid(), "both ordered tables accepted");
         shot(shooter, 100.0, 1000.0, 0.4);
         shot(shooter, 125.0, 1050.0, 0.38);
+        shot(shooter, 149.9, 1099.8, 0.36008);
         shot(shooter, 150.0, 1100.0, 0.36);
+        shot(shooter, 150.1, 1101.2, 0.35988);
         shot(shooter, 175.0, 1400.0, 0.33);
+        shot(shooter, 199.9, 1698.8, 0.30012);
         shot(shooter, 200.0, 1700.0, 0.3);
+        shot(shooter, 200.1, 1700.5, 0.29984);
         shot(shooter, 225.0, 1825.0, 0.26);
         shot(shooter, 250.0, 1950.0, 0.22);
         shot(shooter, 275.0, 1975.0, 0.21);
         shot(shooter, 300.0, 2000.0, 0.2);
         shot(shooter, 0.0, 1000.0, 0.4);
         shot(shooter, 350.0, 2000.0, 0.2);
-        ShooterConstants.additionalShotPoints[1][1] = 1300.0;
+        ShooterConstants.nearShotPoints[4][1] = 1300.0;
         shot(shooter, 150.0, 1300.0, 0.36);
         shot(shooter, 175.0, 1500.0, 0.33);
+        shot(shooter, 200.0, 1700.0, 0.3);
 
-        ShooterConstants.additionalShotPoints = new double[][]{
-                {350.0, 2100.0, 0.15}, {50.0, 800.0, 0.45}
-        };
+        ShooterConstants.nearShotPoints[0] = new double[]{50.0, 800.0, 0.45};
+        ShooterConstants.farShotPoints[4] = new double[]{350.0, 2100.0, 0.15};
         shot(shooter, 0.0, 800.0, 0.45);
-        shot(shooter, 75.0, 900.0, 0.425);
-        shot(shooter, 325.0, 2050.0, 0.175);
         shot(shooter, 400.0, 2100.0, 0.15);
 
-        for (double[][] invalid : new double[][][]{
-                null, {null}, {{150.0, 1250.0}}, {{150.0, 1250.0, 0.35, 0.0}},
-                {{100.0, 1250.0, 0.35}}, {{300.0, 1250.0, 0.35}},
-                {{150.0, 1250.0, 0.35}, {150.0, 1400.0, 0.3}},
-                {{0.0, 1250.0, 0.35}}, {{150.0, 0.0, 0.35}}, {{150.0, 1250.0, 0.6}}
+        for (double[][] invalid : new double[][][]{null, new double[4][], new double[6][]}) {
+            configure();
+            shot(shooter, 200.0, 1500.0, 0.3);
+            ShooterConstants.farShotPoints = invalid;
+            check(!Shooter.areDistanceShotValuesValid(), "table must contain five points");
+            stopped(shooter, 200.0);
+        }
+        for (double[] invalid : new double[][]{
+                null, {}, {100.0, 1000.0}, {100.0, 1000.0, 0.4, 0.0},
+                {110.0, 1000.0, 0.4}, {120.0, 1000.0, 0.4},
+                {0.0, 1000.0, 0.4}, {100.0, 0.0, 0.4}, {100.0, 1000.0, 0.6}
         }) {
             configure();
             shot(shooter, 200.0, 1500.0, 0.3);
-            ShooterConstants.additionalShotPoints = invalid;
-            check(!Shooter.areDistanceShotValuesValid(), "malformed or duplicate point rejected");
+            ShooterConstants.nearShotPoints[0] = invalid;
+            check(!Shooter.areDistanceShotValuesValid(), "malformed or unordered point rejected");
+            stopped(shooter, 200.0);
+        }
+        for (double firstFarDistance : new double[]{140.0, 135.0}) {
+            configure();
+            shot(shooter, 200.0, 1500.0, 0.3);
+            ShooterConstants.farShotPoints[0][0] = firstFarDistance;
+            check(!Shooter.areDistanceShotValuesValid(), "near and far ranges must be ordered and disjoint");
             stopped(shooter, 200.0);
         }
         for (int column = 0; column < 3; column++) {
             for (double invalid : new double[]{Double.NaN, Double.POSITIVE_INFINITY, -1.0}) {
                 configure();
                 shot(shooter, 200.0, 1500.0, 0.3);
-                ShooterConstants.additionalShotPoints = new double[][]{{150.0, 1250.0, 0.35}};
-                ShooterConstants.additionalShotPoints[0][column] = invalid;
+                ShooterConstants.nearShotPoints[0][column] = invalid;
                 check(!Shooter.areDistanceShotValuesValid(), "invalid point value rejected");
                 stopped(shooter, 200.0);
             }
@@ -182,8 +202,11 @@ public class ShooterDistanceCheck {
                 "right power must decrease for the reported 140 ticks/s overspeed");
         check(!shooter.isReady(), "reported overspeed cannot satisfy shooting readiness");
 
-        for (double target : new double[]{ShooterConstants.centerVelocityTicksPerSecond,
-                ShooterConstants.targetVelocity, ShooterConstants.wallVelocityTicksPerSecond}) {
+        double[][] shotPoints = Shooter.getDistanceShotPoints();
+        double[] targets = shotPoints == null
+                ? new double[]{ShooterConstants.targetVelocity}
+                : new double[]{shotPoints[0][1], ShooterConstants.targetVelocity, shotPoints[shotPoints.length - 1][1]};
+        for (double target : targets) {
             shooter.setTargetVelocity(target);
             velocities[1] = target;
             shooter.periodic();
@@ -205,13 +228,14 @@ public class ShooterDistanceCheck {
             if (field.getType() == double.class) original.put(field, field.getDouble(null));
         }
         boolean originalCalibrated = ShooterConstants.velocityControlCalibrated;
-        double[][] originalAdditionalShotPoints = ShooterConstants.additionalShotPoints;
+        double[][] originalNearShotPoints = ShooterConstants.nearShotPoints;
+        double[][] originalFarShotPoints = ShooterConstants.farShotPoints;
         try {
             overspeedMustReducePower();
             multiPointShots();
             Shooter shooter = shooter();
             configure();
-            ShooterConstants.centerVelocityTicksPerSecond = Double.NaN;
+            ShooterConstants.nearShotPoints[0][1] = Double.NaN;
             check(!Shooter.areDistanceShotValuesValid(), "unfilled calibration stays disabled");
             stopped(shooter, 200.0);
             configure();
@@ -222,49 +246,21 @@ public class ShooterDistanceCheck {
             shot(shooter, 300.0, 2000.0, 0.2);
             shot(shooter, 50.0, 1000.0, 0.4);
             shot(shooter, 350.0, 2000.0, 0.2);
-            ShooterConstants.centerDistanceCm = 67.0;
-            ShooterConstants.centerVelocityTicksPerSecond = 1590.0;
-            ShooterConstants.centerPitchPosition = 0.52;
-            ShooterConstants.wallDistanceCm = 112.0;
-            ShooterConstants.wallVelocityTicksPerSecond = 1780.0;
-            ShooterConstants.wallPitchPosition = 0.37;
-            shot(shooter, 67.0, 1590.0, 0.52);
-            shot(shooter, 89.5, 1685.0, 0.445);
-            shot(shooter, 112.0, 1780.0, 0.37);
-            shot(shooter, 120.0, 1780.0, 0.37);
-            configure();
-            ShooterConstants.centerDistanceCm = 300.0;
-            ShooterConstants.wallDistanceCm = 100.0;
-            shot(shooter, 200.0, 1500.0, 0.3);
-            shot(shooter, 50.0, 2000.0, 0.2);
-            shot(shooter, 350.0, 1000.0, 0.4);
 
             for (double invalid : new double[]{Double.NaN, Double.POSITIVE_INFINITY, -1.0}) {
                 configure();
                 shot(shooter, 200.0, 1500.0, 0.3);
                 stopped(shooter, invalid);
             }
-            for (String name : new String[]{"centerDistanceCm", "centerVelocityTicksPerSecond", "centerPitchPosition",
-                    "wallDistanceCm", "wallVelocityTicksPerSecond", "wallPitchPosition", "targetChangeResetThreshold"}) {
-                for (double invalid : new double[]{Double.NaN, Double.POSITIVE_INFINITY, -1.0}) {
-                    configure();
-                    shot(shooter, 200.0, 1500.0, 0.3);
-                    ShooterConstants.class.getField(name).setDouble(null, invalid);
-                    check(!Shooter.areDistanceShotValuesValid(), "invalid configuration: " + name);
-                    stopped(shooter, 200.0);
-                }
+            for (double invalid : new double[]{Double.NaN, Double.POSITIVE_INFINITY, -1.0}) {
+                configure();
+                shot(shooter, 200.0, 1500.0, 0.3);
+                ShooterConstants.targetChangeResetThreshold = invalid;
+                check(!Shooter.areDistanceShotValuesValid(), "invalid target change reset threshold");
+                stopped(shooter, 200.0);
             }
             configure();
-            ShooterConstants.wallDistanceCm = ShooterConstants.centerDistanceCm;
-            stopped(shooter, 200.0);
-            configure();
-            ShooterConstants.centerVelocityTicksPerSecond = 0.0;
-            stopped(shooter, 200.0);
-            configure();
             ShooterConstants.maxPower = 0.0;
-            stopped(shooter, 200.0);
-            configure();
-            ShooterConstants.wallPitchPosition = 0.6;
             stopped(shooter, 200.0);
 
             configure();
@@ -383,7 +379,8 @@ public class ShooterDistanceCheck {
             System.out.println("PASS ShooterDistanceCheck: " + checks + " assertions");
         } finally {
             ShooterConstants.velocityControlCalibrated = originalCalibrated;
-            ShooterConstants.additionalShotPoints = originalAdditionalShotPoints;
+            ShooterConstants.nearShotPoints = originalNearShotPoints;
+            ShooterConstants.farShotPoints = originalFarShotPoints;
             for (Map.Entry<Field, Double> entry : original.entrySet()) {
                 entry.getKey().setDouble(null, entry.getValue());
             }

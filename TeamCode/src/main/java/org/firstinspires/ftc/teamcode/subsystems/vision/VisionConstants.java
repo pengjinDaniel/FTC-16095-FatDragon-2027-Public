@@ -17,13 +17,6 @@ public class VisionConstants {
     };
     public static double cellTargetReferenceHeightInches = 58.25;
     public static double cellTargetReferenceTiltDegrees = 30.0;
-    // Four-tag centroids from the BIOBUZZ flat fmaps, in the same CellCluster order.
-    // Fmap translations are meters; these reference points are at zero HIVE tilt.
-    public static double[][] tagClusterCenterFieldXYInches = {
-            {-0.36243411 / 0.0254, -12.75}, {0.36243411 / 0.0254, -12.75},
-            {0.36243411 / 0.0254, 12.75}, {-0.36243411 / 0.0254, 12.75}
-    };
-    public static double tagClusterCenterReferenceHeightInches = 1.07826892 / 0.0254;
     // Official CAD pivot height; the manual rounds this to 43.95 inches.
     public static double hivePivotHeightInches = 43.9497007874;
     public static double maximumHiveTiltDegrees = 35.0;

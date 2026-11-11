@@ -189,37 +189,18 @@ public class HiveGeometryCheck {
             }
         }
 
-        for (CellCluster cluster : CellCluster.values()) {
-            double side = cluster == CellCluster.RED_AUDIENCE || cluster == CellCluster.BLUE_AUDIENCE
-                    ? 1.0 : -1.0;
-            double tagY = cluster.isForAlliance(Alliance.BLUE) ? 12.75 : -12.75;
-            // Independent centroids of the four fmap translations, rotated about the CAD pivot.
-            for (double[] sample : new double[][]{
-                    {0.0, 14.2690594488}, {-30.0, 13.1064522228}, {30.0, 11.6082837189}}) {
-                double[] center = VisionMath.tagClusterCenterForHiveTilt(cluster, side * sample[0]);
-                close(center[0], side * sample[1], .0001, "four-tag center follows HIVE tilt");
-                close(center[1], tagY, 1e-9, "four-tag center keeps alliance Y");
-            }
-            double[] fallback = VisionMath.tagClusterCenterForHiveTilt(cluster, Double.NaN);
-            close(fallback[0], side * 13.1064522228, .0001, "unknown tilt uses nominal HIGH geometry");
-        }
-        check(VisionMath.tagClusterCenterForHiveTilt(null, 0.0) == null,
-                "missing CELL has no four-tag center");
-
         for (Alliance alliance : Alliance.values()) {
             for (double side : new double[]{-1, 1}) {
-                for (double distanceCm : new double[]{67.0, 89.5, 112.0}) {
+                for (double yOffsetCm : new double[]{67.0, 89.5, 112.0}) {
                     RuntimePath runtime = new RuntimePath(alliance);
-                    double x = side * 13.1064522228;
-                    double y = (alliance == Alliance.BLUE ? 1 : -1) * (12.75 + distanceCm / 2.54);
+                    double x = side * 13.0;
+                    double y = (alliance == Alliance.BLUE ? 1 : -1) * (12.75 + yOffsetCm / 2.54);
                     check(runtime.drive.updateVisionPose(pose(x, y, 90), 1, 0), "measured pose initializes");
                     runtime.frame(solve(x, y, 90, -side * 30.0), 2, false, 0);
-                    close(DistanceUnit.INCH.toCm(runtime.vision.getTagCenterHorizontalDistanceInches()),
-                            distanceCm, .002, "four-tag diagnostic distance remains available");
                     close(runtime.vision.getTargetXInches(), side * 17.7, .002,
                             "aiming restores the fixed historical CELL opening");
                     close(DistanceUnit.INCH.toCm(runtime.vision.getTargetHorizontalDistanceInches()),
-                            Math.hypot((17.7 - 13.1064522228) * 2.54, distanceCm), .002,
+                            Math.hypot((side * 17.7 - x) * 2.54, yOffsetCm), .002,
                             "shooting and aiming share the CELL-opening distance");
                 }
             }
@@ -260,8 +241,9 @@ public class HiveGeometryCheck {
             runtime.vision.updateFieldTarget(runtime.drive, false, 200_000_000L);
             check(runtime.drive.isFieldPoseInitialized() && runtime.vision.hasValidAimingTarget(),
                     "tag loss preserves initialized odometry and aiming");
-            check(Double.isFinite(runtime.vision.getTagCenterHorizontalDistanceInches()),
-                    "tag loss retains shot distance from cached HIVE geometry");
+            close(runtime.vision.getTargetHorizontalDistanceInches(),
+                    Math.hypot(30 - 17.7, Math.abs(y) - 12.75), .002,
+                    "tag loss preserves odometry distance to the CELL opening");
             runtime.pinpoint.position = pose(-30, y, 180);
             runtime.frame(solve(-30, y, 180, 30), 3, false, 300_000_000L);
             check(!runtime.drive.hasAcceptedVisionFrame(3),

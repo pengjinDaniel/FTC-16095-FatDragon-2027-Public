@@ -212,16 +212,12 @@ public abstract class TeleOpBase extends CommandOpMode {
                 ? String.format(java.util.Locale.US, "%.1f cm", shotDistanceCm) : "等待有效距离");
         if (located && vision.hasValidAimingTarget()
                 && Double.isFinite(shotDistanceCm) && shotDistanceCm > 0.0) {
-            telemetry.addData("在center位置抄这一行", String.format(java.util.Locale.US,
-                    "centerDistanceCm = %.2f;", shotDistanceCm));
-            telemetry.addData("在wall位置抄这一行", String.format(java.util.Locale.US,
-                    "wallDistanceCm = %.2f;", shotDistanceCm));
-            telemetry.addLine("距离标定：停车后抄对应位置的一行（单位cm）。");
+            telemetry.addData("停车后记录标定距离", "%.2f cm", shotDistanceCm);
         } else {
             telemetry.addData("距离标定", "等待有效场地定位，暂不能填写距离");
         }
-        telemetry.addLine("center/wall的目标转速（ticks/s）和Pitch：在ShooterConstants填写，用Shooter Test验证。");
-        telemetry.addData("两点射击参数", Shooter.areDistanceShotValuesValid() ? "已填写" : "未填完整或超出限值");
+        telemetry.addLine("在ShooterConstants的nearShotPoints或farShotPoints填写距离、转速和Pitch。");
+        telemetry.addData("射击标定表", Shooter.areDistanceShotValuesValid() ? "已填写" : "未填完整或超出限值");
         telemetry.addData("Pitch位置", "%.3f", shooter.getPitchPosition());
         telemetry.update();
     }
@@ -242,7 +238,7 @@ public abstract class TeleOpBase extends CommandOpMode {
         if (stopLatched) return "B已停止";
         if (!aimRequested) return "未按R2";
         if (gamepad1.right_bumper) return "正在排堵";
-        if (!Shooter.areDistanceShotValuesValid()) return "两点射击参数未填完整或超出限值";
+        if (!Shooter.areDistanceShotValuesValid()) return "射击标定表未填完整或超出限值";
         if (isAutoAimEnabled() && !vision.isAimCalibrationReady())
             return vision.getRtCalibrationStatus();
         if (!vision.hasValidAimingTarget()) return "定位或瞄准目标无效";

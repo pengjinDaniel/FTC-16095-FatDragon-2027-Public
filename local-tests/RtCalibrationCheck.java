@@ -225,11 +225,11 @@ public class RtCalibrationCheck {
         near(f.drive.getPose().getHeading(AngleUnit.DEGREES), 3, "the second RT correction writes heading");
         check(f.vision.getCalibrationStatus().contains("2/2"), "telemetry reports both successes");
         double error = f.vision.getYawErrorDegrees();
-        double distance = f.vision.getTagCenterHorizontalDistanceInches();
+        double distance = f.vision.getTargetHorizontalDistanceInches();
         for (int i = 0; i < 8; i++) {
             f.rt(pose(-200 + i, -200, 90), 4 + i, 80_000_000L + i * 20_000_000L);
             near(f.vision.getYawErrorDegrees(), error, "held RT ignores later visual yaw and position");
-            near(f.vision.getTagCenterHorizontalDistanceInches(), distance, "held RT measures distance from OD");
+            near(f.vision.getTargetHorizontalDistanceInches(), distance, "held RT measures distance from OD");
             check(f.vision.getSelectedCluster().get() == CellCluster.BLUE_AUDIENCE,
                     "the OD field half selects the CELL during RT");
         }

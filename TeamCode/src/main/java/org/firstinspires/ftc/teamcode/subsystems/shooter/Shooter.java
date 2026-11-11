@@ -12,6 +12,8 @@ import java.util.Objects;
 import java.util.function.DoubleSupplier;
 
 public class Shooter extends SubsystemBase {
+    private static final int SHOT_POINTS_PER_RANGE = 5;
+
     private final DcMotorEx leftShooter;
     private final DcMotorEx rightShooter;
     private final Servo pitchServo;
@@ -93,7 +95,8 @@ public class Shooter extends SubsystemBase {
     public boolean setDistanceTarget(double distanceCm, boolean updatePitch) {
         double[][] points = getDistanceShotPoints();
         double scale = distanceVelocityScale.getAsDouble();
-        if (!areDistanceShotValuesValid(points) || !Double.isFinite(distanceCm) || distanceCm < 0.0
+        if (points == null || !areVelocityControlValuesCalibrated()
+                || !Double.isFinite(distanceCm) || distanceCm < 0.0
                 || !Double.isFinite(scale) || scale <= 0.0 || scale > 1.0) {
             stop();
             return false;
@@ -104,7 +107,7 @@ public class Shooter extends SubsystemBase {
             if (point[0] <= distanceCm && (lower == null || point[0] > lower[0])) lower = point;
             if (point[0] >= distanceCm && (upper == null || point[0] < upper[0])) upper = point;
         }
-        // Clamp to the configured endpoints; interpolate only between adjacent points.
+        // Adjacent points also cover the gap between tables. Clamp beyond the outer endpoints.
         if (lower == null) lower = upper;
         if (upper == null) upper = lower;
         double fraction = lower == upper ? 0.0
@@ -119,39 +122,32 @@ public class Shooter extends SubsystemBase {
     }
 
     public static boolean areDistanceShotValuesValid() {
-        return areDistanceShotValuesValid(getDistanceShotPoints());
+        return areVelocityControlValuesCalibrated() && getDistanceShotPoints() != null;
     }
 
-    private static double[][] getDistanceShotPoints() {
-        double[][] additional = ShooterConstants.additionalShotPoints;
-        if (additional == null) return null;
-        double[][] points = new double[additional.length + 2][];
-        points[0] = new double[]{ShooterConstants.centerDistanceCm,
-                ShooterConstants.centerVelocityTicksPerSecond, ShooterConstants.centerPitchPosition};
-        points[1] = new double[]{ShooterConstants.wallDistanceCm,
-                ShooterConstants.wallVelocityTicksPerSecond, ShooterConstants.wallPitchPosition};
-        System.arraycopy(additional, 0, points, 2, additional.length);
-        return points;
-    }
-
-    private static boolean areDistanceShotValuesValid(double[][] points) {
-        if (!areVelocityControlValuesCalibrated() || points == null
+    /** Returns the ordered near and far points, or null when the tables are invalid. */
+    public static double[][] getDistanceShotPoints() {
+        double[][] near = ShooterConstants.nearShotPoints;
+        double[][] far = ShooterConstants.farShotPoints;
+        if (near == null || far == null
+                || near.length != SHOT_POINTS_PER_RANGE || far.length != SHOT_POINTS_PER_RANGE
                 || !Double.isFinite(ShooterConstants.pitchMinPosition)
                 || !Double.isFinite(ShooterConstants.pitchMaxPosition)
                 || ShooterConstants.pitchMinPosition < 0.0
                 || ShooterConstants.pitchMaxPosition > 1.0
                 || ShooterConstants.pitchMinPosition > ShooterConstants.pitchMaxPosition) {
-            return false;
+            return null;
         }
+        double[][] points = new double[near.length + far.length][];
+        System.arraycopy(near, 0, points, 0, near.length);
+        System.arraycopy(far, 0, points, near.length, far.length);
         for (int i = 0; i < points.length; i++) {
             double[] point = points[i];
             if (point == null || point.length != 3
-                    || !isDistancePointValid(point[0], point[1], point[2])) return false;
-            for (int j = 0; j < i; j++) {
-                if (point[0] == points[j][0]) return false;
-            }
+                    || !isDistancePointValid(point[0], point[1], point[2])
+                    || (i > 0 && point[0] <= points[i - 1][0])) return null;
         }
-        return true;
+        return points;
     }
 
     private static boolean isDistancePointValid(double distanceCm, double velocity, double pitch) {
