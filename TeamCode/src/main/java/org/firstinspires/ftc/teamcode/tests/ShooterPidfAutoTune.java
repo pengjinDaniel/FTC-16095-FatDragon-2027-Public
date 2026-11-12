@@ -14,7 +14,6 @@ import org.firstinspires.ftc.teamcode.subsystems.shooter.ShooterConstants;
 import java.util.Arrays;
 
 @Config
-@TeleOp(name = "Shooter PIDF Auto Tune", group = "Test")
 public final class ShooterPidfAutoTune extends LinearOpMode {
     // Bench targets can be configured before measuring the shot tables.
     public static double lowTestVelocityTicksPerSecond = 1400.0;

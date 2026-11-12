@@ -11,14 +11,12 @@ import com.arcrobotics.ftclib.command.FunctionalCommand;
 import com.arcrobotics.ftclib.command.InstantCommand;
 import com.arcrobotics.ftclib.command.ParallelDeadlineGroup;
 import com.arcrobotics.ftclib.command.SequentialCommandGroup;
-import com.pedropathing.api.PoseFactory;
 import com.pedropathing.follower.Follower;
 import com.pedropathing.math.Pose;
 import com.pedropathing.paths.Path;
 import com.pedropathing.paths.interpolator.Interpolator;
 import com.qualcomm.hardware.gobilda.GoBildaPinpointDriver;
 import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
-import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.util.ElapsedTime;
 import com.qualcomm.robotcore.util.RobotLog;
 
@@ -31,15 +29,14 @@ import org.firstinspires.ftc.teamcode.subsystems.shooter.Shooter;
 import org.firstinspires.ftc.teamcode.subsystems.transit.Transit;
 import org.firstinspires.ftc.teamcode.subsystems.vision.Alliance;
 import org.firstinspires.ftc.teamcode.subsystems.vision.AutoHiveTarget;
-import org.firstinspires.ftc.teamcode.subsystems.vision.CellCluster;
 import org.firstinspires.ftc.teamcode.subsystems.vision.Vision;
 
 @Config
-@Autonomous(name = "2.5Tip", group = "Auto")
-public class TwoPointFiveTip extends LinearOpMode {
-    private static final double SHOT_VELOCITY_TICKS_PER_SECOND = 1630.0;
-    private static final double FIRST_SHOT_VELOCITY_TICKS_PER_SECOND = 1600.0;
-    private static final double THIRD_SHOT_VELOCITY_TICKS_PER_SECOND = 1650.0;
+@Autonomous(name = "Red 2.5 Tip", group = "Auto")
+public class TwoPointFiveTip extends AllianceAuto {
+    private static final double SHOT_VELOCITY_TICKS_PER_SECOND = 1600.0;
+    private static final double FIRST_SHOT_VELOCITY_TICKS_PER_SECOND = 1590.0;
+    private static final double THIRD_SHOT_VELOCITY_TICKS_PER_SECOND = 1610.0;
     private static final long SHOT_DURATION_MS = 900;
     private static final long SHOT_TIMEOUT_MS = 7000;
     private static final long PATH_4_WAIT_MS = 1000;
@@ -62,9 +59,9 @@ public class TwoPointFiveTip extends LinearOpMode {
     private String lastShotResult = "Pending";
     private int shotAttempt;
     private long lastShotLogNanos;
+    private final String logTag = getClass().getSimpleName();
     private String lastShotDiagnostics = "No shot yet";
 
-    private final PoseFactory poseFactory = PoseFactory.degrees();
     private final Pose start = poseFactory.of(53.9758, 8.557, 270);
     private final Pose path1 = poseFactory.of(57.2779, 24.3089, 270);
     private final Pose point2 = poseFactory.of(7.56, 8.0921, -90);
@@ -95,6 +92,14 @@ public class TwoPointFiveTip extends LinearOpMode {
     private final Pose point11Start = poseFactory.of(57.1782, 24.1118, 270);
     private final Pose point11 = poseFactory.of(11.7493, 97.759, 0);
     private final Pose point11Control1 = poseFactory.of(10.9912, 21.8276, 0);
+
+    public TwoPointFiveTip() {
+        this(Alliance.RED);
+    }
+
+    TwoPointFiveTip(Alliance alliance) {
+        super(alliance);
+    }
 
     public Command autoRoutine() {
         return new SequentialCommandGroup(
@@ -139,8 +144,8 @@ public class TwoPointFiveTip extends LinearOpMode {
             intake = new Intake(hardwareMap);
             shooter = Shooter.withFixedShotVelocity(hardwareMap, this::shotVelocity);
             transit = new Transit(hardwareMap);
-            vision = new Vision(hardwareMap, Alliance.RED);
-            target = new AutoHiveTarget(vision, CellCluster.RED_OPPOSITE_AUDIENCE);
+            vision = new Vision(hardwareMap, alliance);
+            target = new AutoHiveTarget(vision, shotCell);
             pinpoint = hardwareMap.get(
                     GoBildaPinpointDriver.class, Constants.localizerConfig.name.get());
             follower.setPose(start);
@@ -320,7 +325,7 @@ public class TwoPointFiveTip extends LinearOpMode {
                 // Capture the motor state before AutoShootCommand stops and clears it.
                 recordShotDiagnostics();
                 super.end(interrupted);
-                RobotLog.ii("TwoPointFiveTip", "%s | %s", getStatus(), lastShotDiagnostics);
+                RobotLog.ii(logTag, "%s | %s", getStatus(), lastShotDiagnostics);
                 lastShotResult = getStatus();
                 activeShot = null;
             }
@@ -335,7 +340,7 @@ public class TwoPointFiveTip extends LinearOpMode {
                 target.getDistanceCm(), shooter.getTargetVelocity(), shooter.getRightVelocity(),
                 shooter.getRightPidOutput(), shooter.getRightPower(), shooter.isReady(),
                 activeShot == null ? lastShotResult : activeShot.getStatus());
-        RobotLog.ii("TwoPointFiveTip", "%s", lastShotDiagnostics);
+        RobotLog.ii(logTag, "%s", lastShotDiagnostics);
     }
 
     private double shotVelocity() {

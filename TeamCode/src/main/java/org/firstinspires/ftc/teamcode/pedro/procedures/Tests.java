@@ -19,7 +19,6 @@ import com.pedropathing.tuning.autotune.TuningOpMode;
 import com.pedropathing.utils.Angle;
 import com.qualcomm.hardware.gobilda.GoBildaPinpointDriver;
 import com.qualcomm.robotcore.eventloop.opmode.OpModeManager;
-import com.qualcomm.robotcore.eventloop.opmode.OpModeRegistrar;
 import com.qualcomm.robotcore.hardware.HardwareMap;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
@@ -62,7 +61,6 @@ public class Tests extends Procedure {
     Supplier<Algorithm> algorithmSupplier;
     Function<HardwareMap, Follower> followerFunction;
 
-    @OpModeRegistrar
     public static void registerOpModes(OpModeManager manager) {
         Function<HardwareMap, Drivetrain> drivetrain = hardwareMap -> new Mecanum(hardwareMap, Constants.drivetrainConfig);
         Function<HardwareMap, Localizer> localizer = hardwareMap -> new PinpointLocalizer(hardwareMap, Constants.localizerConfig);

@@ -44,17 +44,17 @@ public class DriveConstants {
     public static double positionLockExitToleranceInches = 0.75;
     public static double positionLockMaxSpeedInchesPerSecond = 2.0;
     public static double positionLockStableTimeSeconds = 0.15;
-    public static volatile double autoAimKp = -1;
-    public static volatile double autoAimKi = 0.0;
-    public static volatile double autoAimKd = -0.02;
+    public static volatile double autoAimKp = -1.05;
+    public static volatile double autoAimKi = -0.0375;
+    public static volatile double autoAimKd = -0.017;
     public static volatile double autoAimKf = 0.0;
-    public static volatile double autoAimKs = 0.06;
+    public static volatile double autoAimKs = 0.05; //0.054
     public static volatile double autoAimYawToTurnSign = 1.0;
     public static volatile double autoAimMaxTurnPower = 0.65;
     public static volatile double autoAimTestMaxTurnPower = 0.65;
     public static volatile double autoAimAcquisitionTurnPower = 0.65;
-    public static volatile double aimLockToleranceDegrees = 2.0;
-    public static volatile double aimUnlockToleranceDegrees = 3.0;
+    public static volatile double aimLockToleranceDegrees = 3.5;
+    public static volatile double aimUnlockToleranceDegrees = 5.0;
     public static volatile double aimLockStableTimeSeconds = 0.1;
 }
 

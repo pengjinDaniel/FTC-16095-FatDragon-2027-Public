@@ -28,7 +28,7 @@ import org.firstinspires.ftc.teamcode.pedro.Constants;
 import org.firstinspires.ftc.teamcode.pedro.Tuning;
 import org.firstinspires.ftc.teamcode.subsystems.drive.DriveConstants;
 
-/** Exercises actual SDK registration, Pedro configurations/paths, guards and shutdown. */
+/** Exercises Pedro menu visibility, configurations, paths, guards and shutdown. */
 public class PedroTuningCheck {
     private static int checks;
 
@@ -89,8 +89,8 @@ public class PedroTuningCheck {
 
     private static Map<String, OpMode> register() throws Exception {
         Method registrar = Tests.class.getMethod("registerOpModes", OpModeManager.class);
-        check(registrar.isAnnotationPresent(OpModeRegistrar.class)
-                && Modifier.isStatic(registrar.getModifiers()), "SDK scanner can discover the registrar");
+        check(!registrar.isAnnotationPresent(OpModeRegistrar.class),
+                "the SDK scanner leaves standalone Pedro tests out of the Driver Station");
         Map<String, OpMode> opModes = new LinkedHashMap<>();
         OpModeManager manager = (OpModeManager) Proxy.newProxyInstance(OpModeManager.class.getClassLoader(),
                 new Class<?>[]{OpModeManager.class}, (proxy, method, args) -> {
@@ -104,7 +104,7 @@ public class PedroTuningCheck {
         check(opModes.keySet().equals(new HashSet<>(Arrays.asList(
                 "Pedro Localization Test", "Pedro Pose Test", "Pedro Driving Test", "Pedro Odometry Test",
                 "Pedro Hold Test", "Pedro Line Test", "Pedro Curve Test", "Pedro Interpolation Test",
-                "Pedro Triangle Test", "Pedro Circle Test"))), "all ten Driver Station entries");
+                "Pedro Triangle Test", "Pedro Circle Test"))), "all ten test instances are available for checks");
         return opModes;
     }
 
@@ -221,6 +221,6 @@ public class PedroTuningCheck {
         paths();
         drivetrainStopsOnEveryExit();
         System.out.println("PASS PedroTuningCheck: " + checks
-                + " real configuration, registration, paths, guards and lifecycle checks");
+                + " real configuration, menu visibility, paths, guards and lifecycle checks");
     }
 }

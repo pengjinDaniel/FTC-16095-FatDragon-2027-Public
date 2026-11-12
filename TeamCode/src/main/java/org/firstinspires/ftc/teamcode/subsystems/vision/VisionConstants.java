@@ -17,7 +17,6 @@ public class VisionConstants {
     };
     public static double cellTargetReferenceHeightInches = 58.25;
     public static double cellTargetReferenceTiltDegrees = 30.0;
-    // Official CAD pivot height; the manual rounds this to 43.95 inches.
     public static double hivePivotHeightInches = 43.9497007874;
     public static double maximumHiveTiltDegrees = 35.0;
     public static double robotLevelToleranceDegrees = 10.0;

@@ -23,6 +23,7 @@ import java.util.Map;
 import java.util.Optional;
 
 public class Vision extends SubsystemBase {
+    private static final int REQUIRED_RT_CALIBRATIONS = 2;
     private static final long HIVE_STABLE_NANOS = 150_000_000L;
     private static final long MAX_HIVE_SAMPLE_GAP_NANOS = 200_000_000L;
     private static final double MAX_HIVE_TILT_CHANGE_DEGREES = 2.0;
@@ -66,7 +67,8 @@ public class Vision extends SubsystemBase {
     private boolean calibrationSucceeded;
     private long lastSuccessfulCalibrationNanos;
     private boolean rtAimRequested;
-    private boolean rtCalibrationApplied;
+    private int rtCalibrationSuccessCount;
+    private double lastRtCalibrationFrameTimestamp = Double.NaN;
     private boolean rtStopLatched;
     private boolean usingFusedPose;
     private boolean aimPoseReady;
@@ -235,7 +237,8 @@ public class Vision extends SubsystemBase {
     void updateAimTarget(Drive drive, boolean stopped, boolean aimRequested, long nowNanos) {
         if (aimRequested && !rtAimRequested) drive.resetVisionRejectionSequence();
         if (!aimRequested) {
-            rtCalibrationApplied = false;
+            rtCalibrationSuccessCount = 0;
+            lastRtCalibrationFrameTimestamp = Double.NaN;
             rtStopLatched = false;
             drive.setVisionPausedForAim(false, nowNanos);
         }
@@ -318,7 +321,13 @@ public class Vision extends SubsystemBase {
             calibrationStatus = rtStopLatched ? "Paused: B stop" : "Vision correction not requested";
             return;
         }
-        if (rtAimRequested && rtCalibrationApplied) return;
+        if (rtAimRequested) {
+            if (hasCompletedRtCalibration()) return;
+            if (frameTimestamp == lastRtCalibrationFrameTimestamp || drive.hasAcceptedVisionFrame(frameTimestamp)) {
+                calibrationStatus = "Waiting for a new Limelight frame";
+                return;
+            }
+        }
         if (usingFusedPose) {
             updateFusedLocalization(drive, nowNanos);
             return;
@@ -328,10 +337,10 @@ public class Vision extends SubsystemBase {
             calibrationStatus = "Waiting for corrected vision: " + poseStatus;
             return;
         }
-        boolean applied = drive.updateVisionPose(correctedRobotFieldPose, frameTimestamp, nowNanos);
-        if (applied) recordCalibration(drive, nowNanos, nowNanos);
-        calibrationStatus = rtAimRequested && !applied && drive.hasAcceptedVisionFrame(frameTimestamp)
-                ? "Waiting for a new Limelight frame" : drive.getLocalizationStatus();
+        if (drive.updateVisionPose(correctedRobotFieldPose, frameTimestamp, nowNanos)) {
+            recordCalibration(drive, nowNanos, nowNanos);
+        }
+        calibrationStatus = drive.getLocalizationStatus();
     }
 
     private void updateFusedLocalization(Drive drive, long nowNanos) {
@@ -344,12 +353,7 @@ public class Vision extends SubsystemBase {
             calibrationStatus = "Fusion requires two usable tags from the selected HIVE";
             return;
         }
-        if (frameTimestamp == lastFusionFrameTimestamp) {
-            if (rtAimRequested && drive.hasAcceptedVisionFrame(frameTimestamp)) {
-                calibrationStatus = "Waiting for a new Limelight frame";
-            }
-            return;
-        }
+        if (frameTimestamp == lastFusionFrameTimestamp) return;
 
         double captureLatencyMs = currentResult.getCaptureLatency();
         double pipelineLatencyMs = currentResult.getTargetingLatency();
@@ -409,9 +413,12 @@ public class Vision extends SubsystemBase {
         calibrationSucceeded = true;
         lastSuccessfulCalibrationNanos = observationNanos;
         if (rtAimRequested) {
-            rtCalibrationApplied = true;
+            rtCalibrationSuccessCount++;
+            lastRtCalibrationFrameTimestamp = frameTimestamp;
             aimReferenceChanged = true;
-            drive.setVisionPausedForAim(true, nowNanos);
+            if (hasCompletedRtCalibration()) {
+                drive.setVisionPausedForAim(true, nowNanos);
+            }
         }
     }
 
@@ -431,14 +438,19 @@ public class Vision extends SubsystemBase {
 
     public boolean isAimCalibrationReady() {
         if (!usingFusedPose && !rtAimRequested) return true;
-        return !rtStopLatched && aimPoseReady && (!rtAimRequested || rtCalibrationApplied);
+        return !rtStopLatched && aimPoseReady && (!rtAimRequested || hasCompletedRtCalibration());
+    }
+
+    private boolean hasCompletedRtCalibration() {
+        return rtCalibrationSuccessCount >= REQUIRED_RT_CALIBRATIONS;
     }
 
     public String getRtCalibrationStatus() {
         if (rtStopLatched) return "B stop latched; release RT to resume";
         if (!rtAimRequested) return calibrationStatus;
-        if (!rtCalibrationApplied) return "Waiting for one RT calibration. " + calibrationStatus;
-        return aimPoseReady ? "RT calibrated once. Tracking with Pinpoint."
+        String progress = rtCalibrationSuccessCount + "/" + REQUIRED_RT_CALIBRATIONS;
+        if (!hasCompletedRtCalibration()) return "RT calibration pending (" + progress + "). " + calibrationStatus;
+        return aimPoseReady ? "RT calibration complete (" + progress + "). Tracking with Pinpoint."
                 : "Field pose unavailable. Release RT to calibrate.";
     }
 

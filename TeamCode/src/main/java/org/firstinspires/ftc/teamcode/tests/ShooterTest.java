@@ -16,7 +16,6 @@ import org.firstinspires.ftc.teamcode.subsystems.vision.Alliance;
 import org.firstinspires.ftc.teamcode.subsystems.vision.Vision;
 
 @Config
-@TeleOp(name = "Shooter Test", group = "TeleOp")
 public class ShooterTest extends OpMode {
     public static Alliance alliance = Alliance.BLUE;
 

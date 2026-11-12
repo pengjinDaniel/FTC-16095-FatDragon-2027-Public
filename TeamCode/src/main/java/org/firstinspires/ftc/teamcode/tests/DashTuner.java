@@ -7,7 +7,6 @@ import org.firstinspires.ftc.teamcode.commands.DashboardTuningCommand;
 import org.firstinspires.ftc.teamcode.subsystems.tuning.DashboardTuner;
 
 /** Select this OpMode; edit DashboardTuner fields live in FTC Dashboard. */
-@TeleOp(name = "DashTuner", group = "Test")
 public class DashTuner extends CommandOpMode {
     private DashboardTuner tuner;
 

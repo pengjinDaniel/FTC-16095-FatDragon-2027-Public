@@ -9,14 +9,12 @@ import com.arcrobotics.ftclib.command.CommandScheduler;
 import com.arcrobotics.ftclib.command.FunctionalCommand;
 import com.arcrobotics.ftclib.command.ParallelDeadlineGroup;
 import com.arcrobotics.ftclib.command.SequentialCommandGroup;
-import com.pedropathing.api.PoseFactory;
 import com.pedropathing.follower.Follower;
 import com.pedropathing.math.Pose;
 import com.pedropathing.paths.Path;
 import com.pedropathing.paths.interpolator.Interpolator;
 import com.qualcomm.hardware.gobilda.GoBildaPinpointDriver;
 import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
-import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
 import org.firstinspires.ftc.teamcode.commands.AutoShootCommand;
@@ -26,11 +24,10 @@ import org.firstinspires.ftc.teamcode.subsystems.shooter.Shooter;
 import org.firstinspires.ftc.teamcode.subsystems.transit.Transit;
 import org.firstinspires.ftc.teamcode.subsystems.vision.Alliance;
 import org.firstinspires.ftc.teamcode.subsystems.vision.AutoHiveTarget;
-import org.firstinspires.ftc.teamcode.subsystems.vision.CellCluster;
 import org.firstinspires.ftc.teamcode.subsystems.vision.Vision;
 
 @Autonomous(name = "RedTeammates3", group = "Auto")
-public class RedTeammates3 extends LinearOpMode {
+public class RedTeammates3 extends AllianceAuto {
     private Follower follower;
     private Intake intake;
     private Shooter shooter;
@@ -43,7 +40,6 @@ public class RedTeammates3 extends LinearOpMode {
     private String stage = "INIT";
     private String path4ShotResult = "Pending";
 
-    private final PoseFactory poseFactory = PoseFactory.degrees();
     private final Pose start = poseFactory.of(53.8888, 8.5301, 270);
     private final Pose path1 = poseFactory.of(58.5282, 16.7053, 270);
     private final Pose point2 = poseFactory.of(12.0367, 46.7768, 180);
@@ -57,6 +53,14 @@ public class RedTeammates3 extends LinearOpMode {
     private final Pose point6Control1 = poseFactory.of(40.87, 16.941, 0);
     private final Pose point7 = poseFactory.of(8.0604, 99.6839, 270);
     private final Pose point7Control1 = poseFactory.of(18.8328, 61.2259, 0);
+
+    public RedTeammates3() {
+        this(Alliance.RED);
+    }
+
+    RedTeammates3(Alliance alliance) {
+        super(alliance);
+    }
 
     public Command autoRoutine() {
         return new SequentialCommandGroup(
@@ -97,8 +101,8 @@ public class RedTeammates3 extends LinearOpMode {
             intake = new Intake(hardwareMap);
             shooter = new Shooter(hardwareMap);
             transit = new Transit(hardwareMap);
-            vision = new Vision(hardwareMap, Alliance.RED);
-            target = new AutoHiveTarget(vision, CellCluster.RED_OPPOSITE_AUDIENCE);
+            vision = new Vision(hardwareMap, alliance);
+            target = new AutoHiveTarget(vision, shotCell);
             pinpoint = hardwareMap.get(
                     GoBildaPinpointDriver.class, Constants.localizerConfig.name.get());
             follower.setPose(start);

@@ -149,7 +149,7 @@ public abstract class CoordinateAimTestBase extends OpMode {
         String controlMode = !started ? "INIT" : stopLatched ? "STOPPED"
                 : !aimRequested ? "MANUAL" : vision.hasValidAimingTarget() ? "FUSED_POSE_AIM" : "WAITING_FOR_FIELD_POSE";
 
-        telemetry.addLine("RT: one visual correction, then Pinpoint | B: stop | L3: reset forward");
+        telemetry.addLine("RT: two visual corrections, then Pinpoint | B: stop | L3: reset forward");
         telemetry.addData("Control Mode", controlMode);
         telemetry.addData("Target Status", vision.getTargetStatus());
         telemetry.addData("Fusion", fusionDiagnostics);

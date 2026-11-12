@@ -10,14 +10,12 @@ import com.arcrobotics.ftclib.command.CommandScheduler;
 import com.arcrobotics.ftclib.command.FunctionalCommand;
 import com.arcrobotics.ftclib.command.ParallelDeadlineGroup;
 import com.arcrobotics.ftclib.command.SequentialCommandGroup;
-import com.pedropathing.api.PoseFactory;
 import com.pedropathing.follower.Follower;
 import com.pedropathing.math.Pose;
 import com.pedropathing.paths.Path;
 import com.pedropathing.paths.interpolator.Interpolator;
 import com.qualcomm.hardware.gobilda.GoBildaPinpointDriver;
 import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
-import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.util.ElapsedTime;
 
 import org.firstinspires.ftc.teamcode.commands.AutoShootCommand;
@@ -27,12 +25,11 @@ import org.firstinspires.ftc.teamcode.subsystems.shooter.Shooter;
 import org.firstinspires.ftc.teamcode.subsystems.transit.Transit;
 import org.firstinspires.ftc.teamcode.subsystems.vision.Alliance;
 import org.firstinspires.ftc.teamcode.subsystems.vision.AutoHiveTarget;
-import org.firstinspires.ftc.teamcode.subsystems.vision.CellCluster;
 import org.firstinspires.ftc.teamcode.subsystems.vision.Vision;
 
 @Config
 @Autonomous(name = "RedSolo2", group = "Auto")
-public class RedSolo2 extends LinearOpMode {
+public class RedSolo2 extends AllianceAuto {
     private static final double SHOT_VELOCITY_TICKS_PER_SECOND = 1515.0;
     private static final long SHOT_DURATION_MS = 900;
     private static final long SHOT_TIMEOUT_MS = 7000;
@@ -53,7 +50,6 @@ public class RedSolo2 extends LinearOpMode {
     private int lastTimedOutPath;
     private String lastShotResult = "Pending";
 
-    private final PoseFactory poseFactory = PoseFactory.degrees();
     private final Pose start = poseFactory.of(53.9758, 8.557, 270);
     private final Pose path1 = poseFactory.of(57.2779, 24.3089, 270);
     private final Pose point2 = poseFactory.of(7.56, 8.0921, -90);
@@ -75,6 +71,14 @@ public class RedSolo2 extends LinearOpMode {
     private final Pose point6 = poseFactory.of(58.0777, 121.299, 90);
     private final Pose point7Start = poseFactory.of(58.0777, 121.299, 90);
     private final Pose point7 = poseFactory.of(11.6138, 93.617, 0);
+
+    public RedSolo2() {
+        this(Alliance.RED);
+    }
+
+    RedSolo2(Alliance alliance) {
+        super(alliance);
+    }
 
     public Command autoRoutine() {
         return new SequentialCommandGroup(
@@ -111,8 +115,8 @@ public class RedSolo2 extends LinearOpMode {
             intake = new Intake(hardwareMap);
             shooter = new Shooter(hardwareMap, SHOT_VELOCITY_TICKS_PER_SECOND);
             transit = new Transit(hardwareMap);
-            vision = new Vision(hardwareMap, Alliance.RED);
-            target = new AutoHiveTarget(vision, CellCluster.RED_OPPOSITE_AUDIENCE);
+            vision = new Vision(hardwareMap, alliance);
+            target = new AutoHiveTarget(vision, shotCell);
             pinpoint = hardwareMap.get(
                     GoBildaPinpointDriver.class, Constants.localizerConfig.name.get());
             follower.setPose(start);

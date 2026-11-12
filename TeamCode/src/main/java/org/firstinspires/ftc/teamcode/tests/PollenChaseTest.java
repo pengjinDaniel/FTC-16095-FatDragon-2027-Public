@@ -14,7 +14,6 @@ import org.firstinspires.ftc.teamcode.subsystems.vision.VisionConstants;
 
 import java.util.List;
 
-@TeleOp(name = "Limelight Pollen Chase", group = "Test")
 public class PollenChaseTest extends LinearOpMode {
     // Robot +X is intake-forward. Camera translation is in cm; positive pitch points upward.
     private static final double CAMERA_FORWARD_CM = -12.715;

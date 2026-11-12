@@ -24,7 +24,8 @@ public class ShootAssistCommand extends CommandBase {
     private final AutoAimController autoAim;
     private final PositionHoldController positionHold = new PositionHoldController();
     private final GamepadEx gamepadEx;
-    private final boolean autoAimEnabled;
+    private boolean autoAimEnabled;
+    private double aimHeadingOffsetDegrees;
 
     private boolean canPrepareToFire;
     private boolean manualTranslation;
@@ -136,6 +137,29 @@ public class ShootAssistCommand extends CommandBase {
         return manualTranslation;
     }
 
+    public boolean isAutoAimEnabled() {
+        return autoAimEnabled;
+    }
+
+    public void disableAutoAim() {
+        autoAimEnabled = false;
+        autoAim.reset();
+        positionHold.reset();
+    }
+
+    public void adjustAimHeadingOffset(double deltaDegrees) {
+        aimHeadingOffsetDegrees += deltaDegrees;
+        autoAim.reset();
+    }
+
+    public double getAimHeadingOffsetDegrees() {
+        return aimHeadingOffsetDegrees;
+    }
+
+    public double getAdjustedYawErrorDegrees() {
+        return Math.IEEEremainder(vision.getYawErrorDegrees() + aimHeadingOffsetDegrees, 360.0);
+    }
+
     private double updateShootRequest(boolean jamRequested) {
         if (jamRequested) {
             shooter.stop();
@@ -149,7 +173,7 @@ public class ShootAssistCommand extends CommandBase {
         double autoAimTurn = 0.0;
         if (autoAimEnabled) {
             autoAimTurn = autoAim.calculateTurnPower(
-                    validAimingTarget && !vision.shouldPauseForAimCalibration(), vision.getYawErrorDegrees());
+                    validAimingTarget && !vision.shouldPauseForAimCalibration(), getAdjustedYawErrorDegrees());
         }
 
         double distanceCm = validAimingTarget ? DistanceUnit.INCH.toCm(

@@ -25,11 +25,11 @@ public class ShooterConstants {
     public static double pitchSettleTimeSeconds = 0.2;
     public static double pitchChangeResetThreshold = 0.005;
     public static double[][] nearShotPoints = {
-            {55.8, 1540, 0.67},
-            {64.4, 1590, 0.55},
-            {96.0, 1620, 0.46},
-            {113.2, 1640, 0.43},
-            {120.5, 1670, 0.36}
+            {57.7, 1550, 0.6},
+            {75.0, 1570, 0.5},
+            {95.8, 1590, 0.45},
+            {113.5, 1620, 0.4},
+            {121.3, 1630, 0.35}
     };
 
     public static double[][] farShotPoints = {
@@ -39,20 +39,14 @@ public class ShooterConstants {
             {183.4, 1750, 0.26},
             {215.7, 1870, 0.24}
     };
-
-    // Enables the selected shared PID configuration; verify its gains on the robot.
     public static boolean velocityControlCalibrated = true;
     public static double kP = 0.004;  //0.004
-    public static double kI = 0.0000475;
+    public static double kI = 0.0000495;
     public static double kD = 0.0;
-    // Feedforward is power per tick/s; leave feedback headroom at the shot targets.
-    public static double kF = 0.00046;  //0.00063
-
-    // Fractional speed tolerances; fixed power uses a stable measured reference.
+    public static double kF = 0.000459 35;  //0.00063
     public static double readyEnterTolerance = 0.02;
     public static double readyExitTolerance = 0.025;
     public static double readyStableTimeSeconds = 0.05;
-    // Cumulative target changes above this many ticks/s restart PID and readiness timing.
     public static double targetChangeResetThreshold = 30.0;
 
     private ShooterConstants() {

@@ -23,6 +23,7 @@ public class Shooter extends SubsystemBase {
     // Zero keeps distance-based velocity; positive values override velocity only, not pitch.
     private final DoubleSupplier fixedDistanceTargetVelocity;
 
+    private double distanceVelocityOffsetTicksPerSecond;
     private double targetVelocity = Double.NaN;
     private double velocitySettleReferenceTarget = Double.NaN;
     private boolean velocityControlActive;
@@ -123,6 +124,14 @@ public class Shooter extends SubsystemBase {
         return setDistanceTarget(distanceCm, true);
     }
 
+    public void adjustDistanceVelocityOffset(double deltaTicksPerSecond) {
+        distanceVelocityOffsetTicksPerSecond += deltaTicksPerSecond;
+    }
+
+    public double getDistanceVelocityOffsetTicksPerSecond() {
+        return distanceVelocityOffsetTicksPerSecond;
+    }
+
     public boolean setDistanceTarget(double distanceCm, boolean updatePitch) {
         double[][] points = getDistanceShotPoints();
         double scale = distanceVelocityScale.getAsDouble();
@@ -149,7 +158,8 @@ public class Shooter extends SubsystemBase {
             setPitchPosition(pitch);
         }
         double fixedVelocity = fixedDistanceTargetVelocity.getAsDouble();
-        setTargetVelocity(fixedVelocity > 0.0 ? fixedVelocity : velocity * scale);
+        setTargetVelocity(fixedVelocity > 0.0
+                ? fixedVelocity : velocity * scale + distanceVelocityOffsetTicksPerSecond);
         return hasTargetVelocity();
     }
 

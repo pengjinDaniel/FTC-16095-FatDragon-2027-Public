@@ -24,6 +24,8 @@ import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.Pose2D;
 
 public abstract class TeleOpBase extends CommandOpMode {
+    private static final long AUTO_AIM_DISABLE_HOLD_NANOS = 3_000_000_000L;
+
     private Drive drive;
     private Shooter shooter;
     private Intake intake;
@@ -31,6 +33,9 @@ public abstract class TeleOpBase extends CommandOpMode {
     private Vision vision;
     private AutoAimController autoAim;
     private ShootAssistCommand shootAssistCommand;
+    private GamepadEx gamepadEx2;
+    private long autoAimDisableHoldStartedAtNanos;
+    private boolean waitForAimDisableRelease;
     private boolean started;
     private boolean aimRequested;
     private boolean stopLatched;
@@ -51,6 +56,8 @@ public abstract class TeleOpBase extends CommandOpMode {
         started = false;
         aimRequested = false;
         stopLatched = false;
+        autoAimDisableHoldStartedAtNanos = -1;
+        waitForAimDisableRelease = false;
         drive = new Drive(hardwareMap,
                 isAutoAimEnabled() && DriveConstants.fusedTeleOpLocalizationEnabled);
         shooter = new Shooter(hardwareMap);
@@ -59,6 +66,7 @@ public abstract class TeleOpBase extends CommandOpMode {
         vision = createVision();
         autoAim = new AutoAimController();
         GamepadEx gamepadEx = new GamepadEx(gamepad1);
+        gamepadEx2 = new GamepadEx(gamepad2);
 
         shootAssistCommand = new ShootAssistCommand(
                 drive,
@@ -101,6 +109,7 @@ public abstract class TeleOpBase extends CommandOpMode {
 
     @Override
     public void run() {
+        if (started) updateSecondGamepad(System.nanoTime());
         aimRequested = gamepad1.right_trigger > TeleOpConstants.triggerThreshold;
 
         if (gamepad1.b) {
@@ -123,25 +132,62 @@ public abstract class TeleOpBase extends CommandOpMode {
         showTelemetry();
     }
 
+    private boolean areSecondGamepadTriggersHeld() {
+        return gamepadEx2.getTrigger(GamepadKeys.Trigger.LEFT_TRIGGER) > TeleOpConstants.triggerThreshold
+                && gamepadEx2.getTrigger(GamepadKeys.Trigger.RIGHT_TRIGGER) > TeleOpConstants.triggerThreshold;
+    }
+
+    private void startSecondGamepad() {
+        // Treat inputs already held at START as the initial state.
+        gamepadEx2.readButtons();
+        waitForAimDisableRelease = areSecondGamepadTriggersHeld();
+    }
+
+    private void updateSecondGamepad(long nowNanos) {
+        gamepadEx2.readButtons();
+        int velocitySteps = (gamepadEx2.wasJustPressed(GamepadKeys.Button.DPAD_UP) ? 1 : 0)
+                - (gamepadEx2.wasJustPressed(GamepadKeys.Button.DPAD_DOWN) ? 1 : 0);
+        if (velocitySteps != 0) shooter.adjustDistanceVelocityOffset(10.0 * velocitySteps);
+
+        int headingSteps = (gamepadEx2.wasJustPressed(GamepadKeys.Button.DPAD_LEFT) ? 1 : 0)
+                - (gamepadEx2.wasJustPressed(GamepadKeys.Button.DPAD_RIGHT) ? 1 : 0);
+        if (headingSteps != 0) shootAssistCommand.adjustAimHeadingOffset(headingSteps);
+
+        if (!areSecondGamepadTriggersHeld()) {
+            autoAimDisableHoldStartedAtNanos = -1;
+            waitForAimDisableRelease = false;
+        } else if (shootAssistCommand.isAutoAimEnabled() && !waitForAimDisableRelease) {
+            if (autoAimDisableHoldStartedAtNanos == -1) {
+                autoAimDisableHoldStartedAtNanos = nowNanos;
+            } else if (nowNanos - autoAimDisableHoldStartedAtNanos >= AUTO_AIM_DISABLE_HOLD_NANOS) {
+                shootAssistCommand.disableAutoAim();
+            }
+        }
+    }
+
     private void showTelemetry() {
         Pose2D pose = drive.getPose();
         boolean located = drive.isFieldPoseInitialized()
                 && Double.isFinite(pose.getX(DistanceUnit.INCH))
                 && Double.isFinite(pose.getY(DistanceUnit.INCH))
                 && Double.isFinite(pose.getHeading(AngleUnit.DEGREES));
-        boolean aligned = isAutoAimEnabled() && started && !stopLatched && aimRequested
+        boolean autoAimEnabled = shootAssistCommand.isAutoAimEnabled();
+        boolean aligned = autoAimEnabled && started && !stopLatched && aimRequested
                 && vision.hasValidAimingTarget() && vision.isAimCalibrationReady() && autoAim.isLocked();
         String aimState = !started ? "等待START" : stopLatched ? "已停止"
-                : !isAutoAimEnabled() ? "手动瞄准（右摇杆转向，R2射击）"
+                : !autoAimEnabled ? "手动瞄准（右摇杆转向，R2射击）"
                 : !aimRequested ? "未启动（按R2瞄准）"
                 : !vision.isAimCalibrationReady() ? vision.getRtCalibrationStatus()
                 : !vision.hasValidAimingTarget() ? "无有效瞄准目标"
                 : aligned ? "已对准并稳定" : "未对准或尚未稳定";
-        if (isAutoAimEnabled() && started && aimRequested && !stopLatched && vision.hasValidAimingTarget()) {
+        if (autoAimEnabled && started && aimRequested && !stopLatched && vision.hasValidAimingTarget()) {
             aimState += String.format(java.util.Locale.US, "（误差 %.1f° / 放行 ±%.1f°）",
-                    vision.getYawErrorDegrees(), DriveConstants.aimLockToleranceDegrees);
+                    shootAssistCommand.getAdjustedYawErrorDegrees(), DriveConstants.aimLockToleranceDegrees);
         }
         telemetry.addData("瞄准", aimState);
+        telemetry.addData("手柄2微调", "自瞄%s / 转速 %+.0f ticks/s / 瞄准 %+.0f°（左正）",
+                autoAimEnabled ? "开" : "关", shooter.getDistanceVelocityOffsetTicksPerSecond(),
+                shootAssistCommand.getAimHeadingOffsetDegrees());
         boolean allowed = started && !stopLatched && aimRequested && shootAssistCommand.canFire();
         telemetry.addData("允许射击", allowed ? "是" : "否：" + shootingBlockReason());
         boolean shooterHasTarget = shooter.hasTargetVelocity() && Double.isFinite(shooter.getTargetVelocity());
@@ -178,8 +224,8 @@ public abstract class TeleOpBase extends CommandOpMode {
             telemetry.addData("上次坏读", drive.getLastPinpointReadFailure());
             telemetry.addData("定位", drive.getLocalizationStatus());
             telemetry.addData("视觉校准", vision.getCalibrationStatus());
-            if (aimRequested) {
-                double yawError = vision.getYawErrorDegrees();
+            if (autoAimEnabled && aimRequested) {
+                double yawError = shootAssistCommand.getAdjustedYawErrorDegrees();
                 double headingVelocity = drive.getHeadingVelocityDegreesPerSecond();
                 String measuredTurn = Double.isFinite(headingVelocity)
                         ? String.format(java.util.Locale.US, "%+.1f°/s", headingVelocity) : "IMU不可用";
@@ -240,13 +286,14 @@ public abstract class TeleOpBase extends CommandOpMode {
         if (!aimRequested) return "未按R2";
         if (gamepad1.right_bumper) return "正在排堵";
         if (!Shooter.areDistanceShotValuesValid()) return "射击标定表未填完整或超出限值";
-        if (isAutoAimEnabled() && !vision.isAimCalibrationReady())
+        boolean autoAimEnabled = shootAssistCommand.isAutoAimEnabled();
+        if (autoAimEnabled && !vision.isAimCalibrationReady())
             return vision.getRtCalibrationStatus();
         if (!vision.hasValidAimingTarget()) return "定位或瞄准目标无效";
         if (shootAssistCommand.getFiringState() == Transit.FiringState.REVERSING)
             return "已放行，送球前反转中";
         if (!shooter.isReady()) return "射手转速尚未稳定";
-        if (isAutoAimEnabled() && !autoAim.isLocked()) return "尚未对准";
+        if (autoAimEnabled && !autoAim.isLocked()) return "尚未对准";
         if (!shooter.isPitchReady()) return "射手角度未就绪";
         if (!transit.areLimitPositionsCalibrated()) return "挡板位置未校准";
         return "等待射击状态就绪";
@@ -279,6 +326,7 @@ public abstract class TeleOpBase extends CommandOpMode {
             waitForStart();
             drive.periodic();
             drive.resetDriverHeading();
+            startSecondGamepad();
             started = true;
             while (!isStopRequested() && opModeIsActive()) {
                 run();
