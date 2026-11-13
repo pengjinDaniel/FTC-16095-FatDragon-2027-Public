@@ -43,7 +43,7 @@ public class ShooterConstants {
     public static double kP = 0.004;  //0.004
     public static double kI = 0.0000495;
     public static double kD = 0.0;
-    public static double kF = 0.000459 35;  //0.00063
+    public static double kF = 0.00045935;  //0.00063
     public static double readyEnterTolerance = 0.02;
     public static double readyExitTolerance = 0.025;
     public static double readyStableTimeSeconds = 0.05;
