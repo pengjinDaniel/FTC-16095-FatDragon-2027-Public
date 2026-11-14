@@ -45,7 +45,7 @@ public class DriveConstants {
     public static double positionLockMaxSpeedInchesPerSecond = 2.0;
     public static double positionLockStableTimeSeconds = 0.15;
     public static volatile double autoAimKp = -1.05;
-    public static volatile double autoAimKi = -0.0375;
+    public static volatile double autoAimKi = -0.028;
     public static volatile double autoAimKd = -0.017;
     public static volatile double autoAimKf = 0.0;
     public static volatile double autoAimKs = 0.05; //0.054
