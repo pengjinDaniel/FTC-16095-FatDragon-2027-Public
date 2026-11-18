@@ -16,6 +16,7 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
@@ -25,6 +26,9 @@ import org.firstinspires.ftc.robotcore.external.navigation.Pose3D;
 import org.firstinspires.ftc.robotcore.external.navigation.Position;
 import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles;
 import org.firstinspires.ftc.teamcode.commands.ShootAssistCommand;
+import org.firstinspires.ftc.teamcode.opmodes.teleops.Blue;
+import org.firstinspires.ftc.teamcode.opmodes.teleops.Red;
+import org.firstinspires.ftc.teamcode.opmodes.teleops.TeleOpBase;
 import org.firstinspires.ftc.teamcode.subsystems.drive.AutoAimController;
 import org.firstinspires.ftc.teamcode.subsystems.drive.Drive;
 import org.firstinspires.ftc.teamcode.subsystems.drive.DriveConstants;
@@ -80,13 +84,18 @@ public class RtCalibrationCheck {
     }
 
     private static class Fixture {
-        final Vision vision = (Vision) U.allocateInstance(Vision.class);
+        final Vision vision;
         final CaptureDrive drive = (CaptureDrive) U.allocateInstance(CaptureDrive.class);
         final VisionCalibrationCheck.FakePinpoint pp = (VisionCalibrationCheck.FakePinpoint)
                 U.allocateInstance(VisionCalibrationCheck.FakePinpoint.class);
         final Method clear = Vision.class.getDeclaredMethod("clearCurrentFrame");
 
         Fixture() throws Exception {
+            this((Vision) U.allocateInstance(Vision.class));
+        }
+
+        Fixture(Vision vision) throws Exception {
+            this.vision = vision;
             pp.position = pose(0, 0, 0);
             pp.status = DeviceStatus.READY;
             pp.xOffsetMm = DriveConstants.pinpointXOffsetMm;
@@ -655,9 +664,12 @@ public class RtCalibrationCheck {
 
     private static class Camera extends Limelight3A {
         Frame frame;
+        int stops;
+        int reads;
         Camera() { super(null, "test", null); }
         @Override public boolean isConnected() { return true; }
-        @Override public LLResult getLatestResult() { return frame; }
+        @Override public LLResult getLatestResult() { reads++; return frame; }
+        @Override public void stop() { stops++; }
     }
 
     private static class Tag extends LLResultTypes.FiducialResult {
@@ -745,6 +757,268 @@ public class RtCalibrationCheck {
         f.vision.updateAimTarget(f.drive, false, false, 100_000_000L);
         check(f.pp.writes == 4 && f.vision.isAimCalibrationReady(),
                 "the first eligible frame calibrates when RT is released");
+    }
+
+    private static final class ClockedVision extends Vision {
+        long nowNanos = 1_000_000_000L;
+
+        ClockedVision() { super(null, Alliance.BLUE); }
+
+        @Override
+        public void updateOdometryAimTarget(Drive drive, boolean stopped, boolean aimRequested) {
+            super.updateOdometryAimTarget(drive, stopped, aimRequested, nowNanos);
+        }
+    }
+
+    private static final class CompetitionReplay extends Fixture {
+        final TeleOpBase mode;
+        final Camera camera = (Camera) U.allocateInstance(Camera.class);
+        final Frame frame = (Frame) U.allocateInstance(Frame.class);
+        final Method update = TeleOpBase.class.getDeclaredMethod("updateAimTarget");
+
+        CompetitionReplay(Alliance alliance) throws Exception {
+            super((ClockedVision) U.allocateInstance(ClockedVision.class));
+            Class<? extends TeleOpBase> type = alliance == Alliance.BLUE ? Blue.class : Red.class;
+            mode = (TeleOpBase) U.allocateInstance(type);
+            mode.gamepad1 = (Gamepad) U.allocateInstance(Gamepad.class);
+            set(mode, TeleOpBase.class, "drive", drive);
+            set(mode, TeleOpBase.class, "vision", vision);
+            set(vision, Vision.class, "alliance", alliance);
+            set(vision, Vision.class, "idleCalibrationDeltas", new ArrayList<>());
+            set(vision, Vision.class, "limelight", camera);
+            set(vision, Vision.class, "pollingStartedAtMs", 100L);
+
+            frame.tag = (Tag) U.allocateInstance(Tag.class);
+            frame.tag.id = alliance == Alliance.BLUE ? 38 : 30;
+            frame.pipeline = alliance == Alliance.BLUE ? 0 : 1;
+            frame.timestamp = 1;
+            frame.captureLatency = 15;
+            set(frame, LLResult.class, "controlHubTimeStamp", 101L);
+            set(vision, Vision.class, "pipelineIndex", frame.pipeline);
+            camera.frame = frame;
+            update.setAccessible(true);
+        }
+
+        void tick(long elapsedMs) throws Exception {
+            ((ClockedVision) vision).nowNanos += elapsedMs * 1_000_000L;
+            drive.periodic();
+            update.invoke(mode);
+        }
+
+        void fresh(long elapsedMs) throws Exception {
+            frame.timestamp++;
+            tick(elapsedMs);
+        }
+
+        void holdRt(boolean held) throws Exception {
+            mode.gamepad1.right_trigger = held ? 1.0f : 0.0f;
+            set(mode, TeleOpBase.class, "aimRequested", held);
+        }
+
+        void cameraPose(double x, double y, double heading) {
+            frame.pose = new Pose3D(new Position(DistanceUnit.CM, x, y, 0.0, 0),
+                    new YawPitchRollAngles(AngleUnit.DEGREES, heading, 0.0, 0.0, 0));
+        }
+
+        void initializeCompetitionPose() throws Exception {
+            tick(0);
+            fresh(30);
+            check(pp.writes == 1 && drive.isFieldPoseInitialized(),
+                    "the first eligible low-speed frame initializes the field pose");
+        }
+    }
+
+    private static void competitionCalibratesOnlyBetweenRtPresses() throws Exception {
+        for (Alliance alliance : Alliance.values()) {
+            CompetitionReplay r = new CompetitionReplay(alliance);
+            set(r.frame, LLResult.class, "controlHubTimeStamp", 99L);
+            r.tick(0);
+            check(r.pp.writes == 0 && r.camera.reads == 1, "INIT rejects a camera frame from a prior OpMode");
+
+            set(r.frame, LLResult.class, "controlHubTimeStamp", 101L);
+            set(r.mode, TeleOpBase.class, "started", true);
+            r.holdRt(true);
+            r.fresh(40);
+            check(r.pp.writes == 0 && r.camera.reads == 1 && !r.vision.hasValidAimingTarget(),
+                    alliance + " does not read vision under RT without a field pose");
+
+            r.holdRt(false);
+            r.pp.failAfterPoseWrite = true;
+            r.tick(20);
+            check(r.pp.writes == 1 && !r.vision.wasCorrectionApplied(),
+                    "an initial writeback failure is not a calibration success");
+            r.pp.failAfterPoseWrite = false;
+            r.pp.status = DeviceStatus.READY;
+            r.fresh(30);
+            check(r.pp.writes == 2 && r.vision.hasValidAimingTarget(),
+                    "a fresh frame can immediately retry the failed initialization after START");
+
+            int readsAfterSuccess = r.camera.reads;
+            r.pp.position = pose(140, 80, 12);
+            r.fresh(30);
+            check(r.pp.writes == 2 && r.camera.reads == readsAfterSuccess + 1
+                            && r.vision.hasValidAimingTarget(),
+                    "idle cooling still observes vision and updates targeting from Pinpoint");
+
+            int readsBeforeHold = r.camera.reads;
+            r.holdRt(true);
+            r.fresh(10);
+            String snapshot = r.vision.getOdometryCalibrationDiagnostics();
+            check(snapshot.contains("Aim difference") && snapshot.contains("Last correction 0.04 s"),
+                    "RT captures the last comparison and correction age at the instant the driver presses it");
+            r.fresh(400);
+            check(r.pp.writes == 2 && r.camera.reads == readsBeforeHold && r.vision.isAimCalibrationReady()
+                            && snapshot.equals(r.vision.getOdometryCalibrationDiagnostics()),
+                    "RT leaves the snapshot frozen and uses odometry after cooling has elapsed");
+
+            Pose2D odometry = r.drive.getPose();
+            double[] target = VisionConstants.cellTargetFieldXYInches[
+                    CellCluster.forFieldX(alliance, odometry.getX(DistanceUnit.INCH)).get().getTuningIndex()];
+            near(r.vision.getYawErrorDegrees(), VisionMath.coordinateYawErrorDegrees(
+                    odometry, target[0], target[1], VisionConstants.shooterYawDegrees),
+                    "RT aim error is calculated from current odometry and the fixed target");
+            near(r.vision.getTargetHorizontalDistanceInches(), Math.hypot(
+                    target[0] - odometry.getX(DistanceUnit.INCH), target[1] - odometry.getY(DistanceUnit.INCH)),
+                    "RT distance is calculated from current odometry and the fixed target");
+
+            r.pp.status = DeviceStatus.FAULT_BAD_READ;
+            r.tick(20);
+            check(!r.vision.hasValidAimingTarget(), "bad Pinpoint reads invalidate competition aiming");
+            r.pp.status = DeviceStatus.READY;
+            r.tick(20);
+            check(r.vision.hasValidAimingTarget() && r.pp.writes == 2 && r.camera.reads == readsBeforeHold,
+                    "read recovery uses the existing field registration");
+
+            r.drive.clearVisionPose("Simulated Pinpoint reset");
+            r.tick(25);
+            check(!r.vision.hasValidAimingTarget() && r.pp.writes == 2,
+                    "loss of the field pose cannot trigger correction during RT");
+            r.holdRt(false);
+            r.mode.gamepad1.b = true;
+            r.fresh(25);
+            check(r.pp.writes == 2 && r.camera.reads == readsBeforeHold, "B pauses idle correction");
+            r.mode.gamepad1.b = false;
+            r.fresh(25);
+            check(r.pp.writes == 3 && r.vision.wasCorrectionApplied() && r.vision.hasValidAimingTarget()
+                            && r.camera.stops == 0,
+                    "a qualified frame can restore the field pose as soon as RT and B are released");
+        }
+    }
+
+    private static void competitionConfirmsAimDriftWithConsistentFrames() throws Exception {
+        for (Alliance alliance : Alliance.values()) {
+            CompetitionReplay r = new CompetitionReplay(alliance);
+            r.initializeCompetitionPose();
+            double[] target = VisionConstants.cellTargetFieldXYInches[
+                    CellCluster.forFieldX(alliance, 1).get().getTuningIndex()];
+            double x = DistanceUnit.INCH.toCm(target[0]) + 100.0;
+            double y = DistanceUnit.INCH.toCm(target[1]);
+            r.pp.position = pose(x, y + 6.0, 0.0);
+
+            r.cameraPose(x, y, 0.0);
+            r.fresh(300);
+            r.tick(5);
+            r.tick(5);
+            check(r.pp.writes == 1 && r.vision.getOdometryCalibrationDiagnostics().contains("3.4 deg"),
+                    "six lateral centimeters at one meter trigger a candidate without counting duplicate frames");
+
+            r.cameraPose(x, y + 12.0, 0.0);
+            r.fresh(25);
+            check(r.pp.writes == 1 && r.vision.getCalibrationStatus().contains("restarting"),
+                    "opposing translation corrections restart frame confirmation");
+            r.cameraPose(x, y, 0.0);
+            r.fresh(25);
+            r.cameraPose(x, y, 6.0);
+            r.fresh(25);
+            check(r.pp.writes == 1 && r.vision.getCalibrationStatus().contains("restarting"),
+                    "inconsistent heading corrections restart frame confirmation");
+
+            r.cameraPose(x, y, 0.0);
+            r.fresh(25);
+            r.cameraPose(x, y + 1.0, 0.3);
+            r.fresh(25);
+            check(r.pp.writes == 1, "two consistent new frames are insufficient");
+            r.cameraPose(x, y + 2.0, 0.6);
+            r.fresh(25);
+            check(r.pp.writes == 2 && r.vision.wasCorrectionApplied(),
+                    "three consistent frames correct aim drift even below the translation and heading thresholds");
+            near(r.drive.getPose().getY(DistanceUnit.CM), y + 1.0, "calibration averages the three translation corrections");
+            near(r.drive.getPose().getHeading(AngleUnit.DEGREES), 0.3, "calibration averages the three heading corrections");
+        }
+    }
+
+    private static void competitionComparesTheSameTargetAndKeepsPositionThreshold() throws Exception {
+        for (Alliance alliance : Alliance.values()) {
+            CompetitionReplay r = new CompetitionReplay(alliance);
+            r.initializeCompetitionPose();
+            r.pp.position = pose(0.1, 100.0, 0.0);
+            r.cameraPose(-0.1, 100.0, 0.0);
+            r.fresh(300);
+            r.fresh(25);
+            r.fresh(25);
+            check(r.pp.writes == 1, "crossing the center line in vision does not compare different target frames");
+
+            r.pp.position = pose(100.0, 40.0, 179.0);
+            r.cameraPose(100.0, 40.0, -179.0);
+            r.fresh(25);
+            r.fresh(25);
+            r.fresh(25);
+            check(r.pp.writes == 1, "the exact wrapped two-degree difference is within the threshold");
+
+            double[] target = VisionConstants.cellTargetFieldXYInches[
+                    CellCluster.forFieldX(alliance, 1).get().getTuningIndex()];
+            double x = DistanceUnit.INCH.toCm(target[0]) + 100.0;
+            double y = DistanceUnit.INCH.toCm(target[1]);
+            r.pp.position = pose(x + 10.0, y, 0.0);
+            r.cameraPose(x, y, 0.0);
+            r.fresh(25);
+            r.fresh(25);
+            r.fresh(25);
+            check(r.pp.writes == 1, "exactly ten radial centimeters do not call for a correction");
+
+            r.pp.position = pose(x + 11.0, y, 0.0);
+            r.fresh(25);
+            r.fresh(25);
+            r.fresh(25);
+            check(r.pp.writes == 2, "radial drift over ten centimeters can calibrate without an aim error");
+            near(r.drive.getPose().getX(DistanceUnit.CM), x, "calibration corrects the range without a turn");
+        }
+    }
+
+    private static void competitionRestrictsMotionAndTimesCoolingFromSuccess() throws Exception {
+        CompetitionReplay r = new CompetitionReplay(Alliance.BLUE);
+        r.pp.velX = 6.0;
+        r.tick(0);
+        r.fresh(40);
+        check(r.pp.writes == 0, "fast translation blocks even the initial field write");
+        r.pp.velX = 0.0;
+        r.pp.headingVelocity = 8.0;
+        r.fresh(40);
+        check(r.pp.writes == 0, "fast rotation also blocks calibration");
+
+        r.pp.headingVelocity = 0.0;
+        r.fresh(1);
+        r.fresh(10);
+        r.tick(20);
+        check(r.pp.writes == 0, "frames captured before slowing remain unusable when repeated after stopping");
+        r.fresh(1);
+        check(r.pp.writes == 1, "a new frame captured at low speed initializes odometry");
+
+        r.pp.position = pose(130.0, 40.0, 0.0);
+        int reads = r.camera.reads;
+        r.fresh(40);
+        r.fresh(40);
+        r.fresh(40);
+        check(r.pp.writes == 1 && r.camera.reads == reads + 3
+                        && r.vision.getCalibrationStatus().contains("cooldown"),
+                "all three frames can be checked during the cooldown without overwriting Pinpoint");
+        r.fresh(179);
+        check(r.pp.writes == 1, "a stable correction waits through 299 milliseconds after success");
+        r.tick(1);
+        check(r.pp.writes == 1, "cooldown expiry does not make an already processed frame new");
+        r.fresh(0);
+        check(r.pp.writes == 2 && r.vision.wasCorrectionApplied(),
+                "the stable fresh correction can write at exactly 300 milliseconds");
     }
 
     private static void mixedAllianceTagsStayUsable() throws Exception {
@@ -970,6 +1244,10 @@ public class RtCalibrationCheck {
         pinpointBadReadDiagnostics();
         odometryAimAndCommittedFeed();
         frozenStaleAndWrongPipeline();
+        competitionCalibratesOnlyBetweenRtPresses();
+        competitionConfirmsAimDriftWithConsistentFrames();
+        competitionComparesTheSameTargetAndKeepsPositionThreshold();
+        competitionRestrictsMotionAndTimesCoolingFromSuccess();
         mixedAllianceTagsStayUsable();
         fusedEstimatorReplaysOdometry();
         fusedVisionQualifiesFrames();

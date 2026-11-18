@@ -19,18 +19,45 @@ import java.util.Collections;
 import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 
 public class Vision extends SubsystemBase {
     private static final int REQUIRED_RT_CALIBRATIONS = 2;
+    private static final long IDLE_CALIBRATION_INTERVAL_NANOS = 300_000_000L;
+    private static final int REQUIRED_IDLE_CALIBRATION_FRAMES = 3;
+    private static final double IDLE_POSITION_DRIFT_CM = 10.0;
+    private static final double IDLE_HEADING_DRIFT_DEGREES = 15.0;
+    private static final double IDLE_AIM_DRIFT_DEGREES = 2.0;
+    private static final double MAX_IDLE_CORRECTION_SPREAD_CM = 3.0;
+    private static final double MAX_IDLE_CORRECTION_SPREAD_DEGREES = 2.0;
+    private static final double MAX_CALIBRATION_SPEED_CM_PER_SECOND = 10.0;
+    private static final double MAX_CALIBRATION_TURN_DEGREES_PER_SECOND = 5.0;
+    private static final double DRIFT_ROUNDING_TOLERANCE = 1e-9;
     private static final long HIVE_STABLE_NANOS = 150_000_000L;
     private static final long MAX_HIVE_SAMPLE_GAP_NANOS = 200_000_000L;
     private static final double MAX_HIVE_TILT_CHANGE_DEGREES = 2.0;
 
+    private enum CorrectionMode { DISABLED, ALLOWED, STABLE_ODOMETRY }
+
+    private static final class CalibrationDelta {
+        final double xCm;
+        final double yCm;
+        final double headingDegrees;
+
+        CalibrationDelta(double xCm, double yCm, double headingDegrees) {
+            this.xCm = xCm;
+            this.yCm = yCm;
+            this.headingDegrees = headingDegrees;
+        }
+    }
+
     private final Limelight3A limelight;
     private final Alliance alliance;
     private final int pipelineIndex;
+    private final long pollingStartedAtMs;
+    private boolean cameraStopped;
     private String poseStatus = "Waiting for AprilTags";
     private String targetStatus = "Field pose not initialized";
     private Pose3D rawRobotFieldPose;
@@ -66,6 +93,14 @@ public class Vision extends SubsystemBase {
     private String calibrationStatus = "Waiting for corrected vision";
     private boolean calibrationSucceeded;
     private long lastSuccessfulCalibrationNanos;
+    private final List<CalibrationDelta> idleCalibrationDeltas = new ArrayList<>(REQUIRED_IDLE_CALIBRATION_FRAMES);
+    private boolean belowCalibrationSpeed;
+    private long belowCalibrationSpeedSinceNanos;
+    private double lastIdleFrameTimestamp = Double.NaN;
+    private long lastIdleFrameNanos;
+    private String lastIdleComparison;
+    private long lastIdleComparisonNanos;
+    private String idleComparisonAtRtStart;
     private boolean rtAimRequested;
     private int rtCalibrationSuccessCount;
     private double lastRtCalibrationFrameTimestamp = Double.NaN;
@@ -87,12 +122,24 @@ public class Vision extends SubsystemBase {
     private Map<CellCluster, HiveState> observedClusterStates = Collections.emptyMap();
 
     public Vision(HardwareMap hardwareMap, Alliance alliance) {
+        this(hardwareMap, alliance, false);
+    }
+
+    public Vision(HardwareMap hardwareMap, Alliance alliance, boolean optionalCamera) {
         this.alliance = alliance;
         pipelineIndex = alliance == Alliance.BLUE
                 ? VisionConstants.bluePipelineIndex : VisionConstants.redPipelineIndex;
-        limelight = hardwareMap.get(Limelight3A.class, VisionConstants.limelightName);
+        limelight = optionalCamera
+                ? hardwareMap.tryGet(Limelight3A.class, VisionConstants.limelightName)
+                : hardwareMap.get(Limelight3A.class, VisionConstants.limelightName);
+        if (limelight == null) {
+            pollingStartedAtMs = 0;
+            poseStatus = "Limelight not configured or unavailable";
+            return;
+        }
         limelight.setPollRateHz(VisionConstants.pollRateHz);
         limelight.pipelineSwitch(pipelineIndex);
+        pollingStartedAtMs = System.currentTimeMillis();
         limelight.start();
     }
 
@@ -102,7 +149,16 @@ public class Vision extends SubsystemBase {
     }
 
     public void update() {
+        update(System.nanoTime());
+    }
+
+    private void update(long nowNanos) {
+        if (cameraStopped) return;
         clearCurrentFrame();
+        if (limelight == null) {
+            poseStatus = "Limelight not configured or unavailable";
+            return;
+        }
         if (!limelight.isConnected()) {
             poseStatus = "Limelight disconnected";
             return;
@@ -127,12 +183,15 @@ public class Vision extends SubsystemBase {
             poseStatus = "Limelight result stale: " + resultAgeMs + " ms";
             return;
         }
+        if (result.getControlHubTimeStamp() < pollingStartedAtMs) {
+            poseStatus = "Waiting for a Limelight frame from this OpMode";
+            return;
+        }
         frameTimestamp = result.getTimestamp();
         if (!Double.isFinite(frameTimestamp) || frameTimestamp <= 0.0) {
             poseStatus = "Invalid Limelight frame timestamp";
             return;
         }
-        long nowNanos = System.nanoTime();
         if (frameTimestamp != lastPhysicalFrameTimestamp) {
             lastPhysicalFrameTimestamp = frameTimestamp;
             lastPhysicalFrameSeenNanos = nowNanos;
@@ -248,19 +307,55 @@ public class Vision extends SubsystemBase {
         if (stopped) calibrationStatus = "Paused: B stop";
     }
 
+    public void updateOdometryAimTarget(Drive drive, boolean stopped, boolean aimRequested) {
+        updateOdometryAimTarget(drive, stopped, aimRequested, System.nanoTime());
+        if (correctionApplied && !usingFusedPose) lastSuccessfulCalibrationNanos = System.nanoTime();
+    }
+
+    void updateOdometryAimTarget(Drive drive, boolean stopped, boolean aimRequested, long nowNanos) {
+        boolean slow = drive.getOdometryTranslationSpeedCmPerSecond() <= MAX_CALIBRATION_SPEED_CM_PER_SECOND
+                && Math.abs(drive.getHeadingVelocityDegreesPerSecond()) <= MAX_CALIBRATION_TURN_DEGREES_PER_SECOND;
+        if (slow && !belowCalibrationSpeed) belowCalibrationSpeedSinceNanos = nowNanos;
+        belowCalibrationSpeed = slow;
+
+        if (!aimRequested) idleComparisonAtRtStart = null;
+        else if (idleComparisonAtRtStart == null) idleComparisonAtRtStart = idleCalibrationDiagnostics(nowNanos);
+
+        if (!stopped && !aimRequested) {
+            update(nowNanos);
+            updateFieldTarget(drive, CorrectionMode.STABLE_ODOMETRY, nowNanos);
+            return;
+        }
+
+        idleCalibrationDeltas.clear();
+        clearCurrentFrame();
+        usingFusedPose = drive.usesPoseFusion();
+        aimReferenceChanged = false;
+        calibrationStatus = stopped ? "Paused: B stop" : "RT held: Pinpoint only";
+        updateCoordinateTarget(drive, false);
+    }
+
     public void updateFieldTarget(Drive drive, boolean correctFromVision) {
         updateFieldTarget(drive, correctFromVision, System.nanoTime());
     }
 
     void updateFieldTarget(Drive drive, boolean correctFromVision, long nowNanos) {
-        CellCluster previousCluster = selectedCluster;
+        updateFieldTarget(drive, correctFromVision ? CorrectionMode.ALLOWED : CorrectionMode.DISABLED, nowNanos);
+    }
+
+    private void updateFieldTarget(Drive drive, CorrectionMode correctionMode, long nowNanos) {
         usingFusedPose = drive.usesPoseFusion();
         aimReferenceChanged = false;
         updateHiveCorrection();
-        updateLocalization(drive, correctFromVision, nowNanos);
-        aimPoseReady = drive.isFieldPoseInitialized();
+        updateLocalization(drive, correctionMode, nowNanos);
         correctedPoseAccepted = correctedRobotFieldPose != null
                 && drive.hasAcceptedVisionFrame(frameTimestamp);
+        updateCoordinateTarget(drive, true);
+    }
+
+    private void updateCoordinateTarget(Drive drive, boolean includeHiveState) {
+        CellCluster previousCluster = selectedCluster;
+        aimPoseReady = drive.isFieldPoseInitialized();
         validAimingTarget = false;
         validShootingTarget = false;
         selectedCluster = null;
@@ -306,7 +401,7 @@ public class Vision extends SubsystemBase {
         validAimingTarget = Double.isFinite(yawErrorDegrees)
                 && Double.isFinite(targetHorizontalDistanceInches);
         // Retain the last observed HIVE geometry while odometry continues through tag loss.
-        targetHiveState = !hasKnownHiveAngle ? HiveState.UNKNOWN
+        targetHiveState = !includeHiveState || !hasKnownHiveAngle ? HiveState.UNKNOWN
                 : Math.abs(lastKnownHiveAngleDegrees) <= VisionConstants.highHiveTiltThresholdDegrees
                 ? HiveState.MIDDLE : -Math.sin(Math.toRadians(lastKnownHiveAngleDegrees))
                 * targetXInches > 0.0 ? HiveState.HIGH : HiveState.LOW;
@@ -316,8 +411,8 @@ public class Vision extends SubsystemBase {
                 : "Coordinate aim ready from Pinpoint";
     }
 
-    private void updateLocalization(Drive drive, boolean correctFromVision, long nowNanos) {
-        if (!correctFromVision || rtStopLatched) {
+    private void updateLocalization(Drive drive, CorrectionMode correctionMode, long nowNanos) {
+        if (correctionMode == CorrectionMode.DISABLED || rtStopLatched) {
             calibrationStatus = rtStopLatched ? "Paused: B stop" : "Vision correction not requested";
             return;
         }
@@ -332,6 +427,10 @@ public class Vision extends SubsystemBase {
             updateFusedLocalization(drive, nowNanos);
             return;
         }
+        if (correctionMode == CorrectionMode.STABLE_ODOMETRY) {
+            updateStableOdometryCorrection(drive, nowNanos);
+            return;
+        }
         if (correctedRobotFieldPose == null) {
             drive.resetVisionRejectionSequence();
             calibrationStatus = "Waiting for corrected vision: " + poseStatus;
@@ -341,6 +440,154 @@ public class Vision extends SubsystemBase {
             recordCalibration(drive, nowNanos, nowNanos);
         }
         calibrationStatus = drive.getLocalizationStatus();
+    }
+
+    private void updateStableOdometryCorrection(Drive drive, long nowNanos) {
+        boolean newFrame = Double.isFinite(frameTimestamp) && frameTimestamp != lastIdleFrameTimestamp;
+        if (newFrame) {
+            if (frameTimestamp < lastIdleFrameTimestamp
+                    || nowNanos - lastIdleFrameNanos > VisionConstants.maxResultAgeMs * 1_000_000L) {
+                idleCalibrationDeltas.clear();
+            }
+            lastIdleFrameTimestamp = frameTimestamp;
+            lastIdleFrameNanos = nowNanos;
+        }
+        if (!belowCalibrationSpeed) {
+            idleCalibrationDeltas.clear();
+            calibrationStatus = "Waiting for valid low-speed Pinpoint data";
+            return;
+        }
+        if (correctedRobotFieldPose == null || currentResult == null) {
+            idleCalibrationDeltas.clear();
+            calibrationStatus = "Waiting for corrected vision: " + poseStatus;
+            return;
+        }
+        if (!newFrame) return;
+
+        double captureAgeMs = captureAgeAtObservationMs();
+        if (!Double.isFinite(captureAgeMs) || captureAgeMs > VisionConstants.maxResultAgeMs
+                || currentResultObservedNanos - (long) (captureAgeMs * 1e6) < belowCalibrationSpeedSinceNanos) {
+            idleCalibrationDeltas.clear();
+            calibrationStatus = "Waiting for a fresh frame captured at low speed";
+            return;
+        }
+
+        boolean coolingDown = calibrationSucceeded
+                && nowNanos - lastSuccessfulCalibrationNanos < IDLE_CALIBRATION_INTERVAL_NANOS;
+        if (!drive.isFieldPoseInitialized()) {
+            idleCalibrationDeltas.clear();
+            lastIdleComparison = null;
+            if (coolingDown) {
+                calibrationStatus = "Vision correction cooldown";
+                return;
+            }
+            if (drive.updateVisionPose(correctedRobotFieldPose, frameTimestamp, nowNanos)) {
+                recordCalibration(drive, nowNanos, nowNanos);
+            }
+            calibrationStatus = drive.getLocalizationStatus();
+            return;
+        }
+
+        Pose2D odometry = drive.getPose();
+        CalibrationDelta delta = new CalibrationDelta(
+                correctedRobotFieldPose.getX(DistanceUnit.CM) - odometry.getX(DistanceUnit.CM),
+                correctedRobotFieldPose.getY(DistanceUnit.CM) - odometry.getY(DistanceUnit.CM),
+                Math.IEEEremainder(correctedRobotFieldPose.getHeading(AngleUnit.DEGREES)
+                        - odometry.getHeading(AngleUnit.DEGREES), 360.0));
+        double positionError = Math.hypot(delta.xCm, delta.yCm);
+        double aimError = aimDirectionDifferenceDegrees(odometry, correctedRobotFieldPose);
+        boolean needCorrection = positionError > IDLE_POSITION_DRIFT_CM + DRIFT_ROUNDING_TOLERANCE
+                || Math.abs(delta.headingDegrees) > IDLE_HEADING_DRIFT_DEGREES + DRIFT_ROUNDING_TOLERANCE
+                || aimError > IDLE_AIM_DRIFT_DEGREES + DRIFT_ROUNDING_TOLERANCE;
+        if (!needCorrection) {
+            idleCalibrationDeltas.clear();
+            saveIdleComparison(nowNanos, positionError, aimError, 0.0, 0.0);
+            calibrationStatus = "Vision and Pinpoint agree within correction thresholds";
+            return;
+        }
+        collectIdleCorrection(drive, odometry, delta, nowNanos, positionError, aimError, coolingDown);
+    }
+
+    private double aimDirectionDifferenceDegrees(Pose2D odometry, Pose2D visualPose) {
+        CellCluster targetCluster = CellCluster.forFieldX(alliance, odometry.getX(DistanceUnit.INCH)).orElse(null);
+        double[] target = getFieldTarget(targetCluster);
+        if (target == null) return Double.NaN;
+        double odometryError = VisionMath.coordinateYawErrorDegrees(
+                odometry, target[0], target[1], VisionConstants.shooterYawDegrees);
+        double visualError = VisionMath.coordinateYawErrorDegrees(
+                visualPose, target[0], target[1], VisionConstants.shooterYawDegrees);
+        return Math.abs(Math.IEEEremainder(visualError - odometryError, 360.0));
+    }
+
+    private void collectIdleCorrection(Drive drive, Pose2D odometry, CalibrationDelta latest, long nowNanos,
+                                       double positionError, double aimError, boolean coolingDown) {
+        if (idleCalibrationDeltas.size() == REQUIRED_IDLE_CALIBRATION_FRAMES) idleCalibrationDeltas.remove(0);
+        idleCalibrationDeltas.add(latest);
+        double positionSpread = 0.0;
+        double headingSpread = 0.0;
+        for (int i = 0; i < idleCalibrationDeltas.size(); i++) {
+            CalibrationDelta a = idleCalibrationDeltas.get(i);
+            for (int j = 0; j < i; j++) {
+                CalibrationDelta b = idleCalibrationDeltas.get(j);
+                positionSpread = Math.max(positionSpread, Math.hypot(a.xCm - b.xCm, a.yCm - b.yCm));
+                headingSpread = Math.max(headingSpread,
+                        Math.abs(Math.IEEEremainder(a.headingDegrees - b.headingDegrees, 360.0)));
+            }
+        }
+        if (positionSpread > MAX_IDLE_CORRECTION_SPREAD_CM + DRIFT_ROUNDING_TOLERANCE
+                || headingSpread > MAX_IDLE_CORRECTION_SPREAD_DEGREES + DRIFT_ROUNDING_TOLERANCE) {
+            idleCalibrationDeltas.clear();
+            idleCalibrationDeltas.add(latest);
+            saveIdleComparison(nowNanos, positionError, aimError, positionSpread, headingSpread);
+            calibrationStatus = "Vision correction changed; restarting frame confirmation";
+            return;
+        }
+
+        saveIdleComparison(nowNanos, positionError, aimError, positionSpread, headingSpread);
+        if (idleCalibrationDeltas.size() < REQUIRED_IDLE_CALIBRATION_FRAMES) {
+            calibrationStatus = "Waiting for consistent vision frames";
+            return;
+        }
+        if (coolingDown) {
+            calibrationStatus = "Vision correction cooldown";
+            return;
+        }
+
+        double xSum = 0.0;
+        double ySum = 0.0;
+        double headingOffsetSum = 0.0;
+        for (CalibrationDelta delta : idleCalibrationDeltas) {
+            xSum += delta.xCm;
+            ySum += delta.yCm;
+            // Average the heading corrections around the newest one to handle +/-180 degrees.
+            headingOffsetSum += Math.IEEEremainder(delta.headingDegrees - latest.headingDegrees, 360.0);
+        }
+        int count = idleCalibrationDeltas.size();
+        Pose2D corrected = new Pose2D(DistanceUnit.CM,
+                odometry.getX(DistanceUnit.CM) + xSum / count,
+                odometry.getY(DistanceUnit.CM) + ySum / count, AngleUnit.DEGREES,
+                odometry.getHeading(AngleUnit.DEGREES) + latest.headingDegrees + headingOffsetSum / count);
+        if (drive.applyConfirmedVisionPose(corrected, frameTimestamp)) {
+            recordCalibration(drive, nowNanos, nowNanos);
+        }
+        calibrationStatus = drive.getLocalizationStatus();
+        idleCalibrationDeltas.clear();
+    }
+
+    private void saveIdleComparison(long nowNanos, double positionError, double aimError,
+                                    double positionSpread, double headingSpread) {
+        lastIdleComparison = String.format(Locale.US,
+                "Aim difference %s / position %.1f cm / frames %d/%d / spread %.1f cm, %.1f deg",
+                Double.isFinite(aimError) ? String.format(Locale.US, "%.1f deg", aimError) : "unavailable",
+                positionError, idleCalibrationDeltas.size(), REQUIRED_IDLE_CALIBRATION_FRAMES, positionSpread, headingSpread);
+        lastIdleComparisonNanos = nowNanos;
+    }
+
+    private double captureAgeAtObservationMs() {
+        double captureLatency = currentResult.getCaptureLatency();
+        double pipelineLatency = currentResult.getTargetingLatency();
+        if (captureLatency < 0.0 || pipelineLatency < 0.0) return Double.NaN;
+        return resultAgeMs + captureLatency + pipelineLatency;
     }
 
     private void updateFusedLocalization(Drive drive, long nowNanos) {
@@ -355,12 +602,9 @@ public class Vision extends SubsystemBase {
         }
         if (frameTimestamp == lastFusionFrameTimestamp) return;
 
-        double captureLatencyMs = currentResult.getCaptureLatency();
-        double pipelineLatencyMs = currentResult.getTargetingLatency();
-        double ageAtObservationMs = resultAgeMs + captureLatencyMs + pipelineLatencyMs;
+        double ageAtObservationMs = captureAgeAtObservationMs();
         double captureAgeMs = ageAtObservationMs + (nowNanos - currentResultObservedNanos) / 1e6;
-        if (!Double.isFinite(captureAgeMs) || captureLatencyMs < 0 || pipelineLatencyMs < 0
-                || captureAgeMs < 0 || captureAgeMs > VisionConstants.maxResultAgeMs) {
+        if (!Double.isFinite(captureAgeMs) || captureAgeMs < 0 || captureAgeMs > VisionConstants.maxResultAgeMs) {
             calibrationStatus = "MT1 capture timestamp is stale or invalid";
             return;
         }
@@ -455,6 +699,20 @@ public class Vision extends SubsystemBase {
     }
 
     public String getCalibrationStatus() { return getRtCalibrationStatus(); }
+
+    public String getOdometryCalibrationDiagnostics() {
+        return idleComparisonAtRtStart != null ? idleComparisonAtRtStart : idleCalibrationDiagnostics(System.nanoTime());
+    }
+
+    private String idleCalibrationDiagnostics(long nowNanos) {
+        String comparison = lastIdleComparison == null ? "No recent vision comparison"
+                : String.format(Locale.US, "%s (%.2f s ago)", lastIdleComparison,
+                        Math.max(0.0, (nowNanos - lastIdleComparisonNanos) / 1e9));
+        String lastCorrection = calibrationSucceeded
+                ? String.format(Locale.US, "%.2f s ago", Math.max(0.0, (nowNanos - lastSuccessfulCalibrationNanos) / 1e9))
+                : "none";
+        return comparison + " / Last correction " + lastCorrection;
+    }
     // Retained for existing callers; continuous calibration has no cooldown.
     public double getCalibrationCooldownRemainingSeconds() {
         return 0.0;
@@ -513,9 +771,16 @@ public class Vision extends SubsystemBase {
         return Optional.ofNullable(correctedRobotFieldPose);
     }
 
-    public void stop() {
-        limelight.stop();
+    public void stopCamera() {
+        if (cameraStopped) return;
+        cameraStopped = true;
+        if (limelight != null) limelight.stop();
         clearCurrentFrame();
+        poseStatus = "Limelight polling stopped";
+    }
+
+    public void stop() {
+        stopCamera();
         validAimingTarget = false;
         validShootingTarget = false;
     }

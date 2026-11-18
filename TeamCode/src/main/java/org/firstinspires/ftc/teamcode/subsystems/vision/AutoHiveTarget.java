@@ -2,6 +2,9 @@ package org.firstinspires.ftc.teamcode.subsystems.vision;
 
 import com.pedropathing.math.Pose;
 
+import java.util.Objects;
+import java.util.function.Function;
+
 import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.Pose2D;
@@ -11,17 +14,24 @@ import org.firstinspires.ftc.teamcode.subsystems.drive.DriveConstants;
 public class AutoHiveTarget {
     private final Vision vision;
     private final CellCluster cluster;
+    private final Function<Pose, Pose2D> fieldPoseFromPedro;
     private HiveState state = HiveState.UNKNOWN;
     private double distanceCm = Double.NaN;
     private double yawErrorDegrees = Double.NaN;
     private String status = "Waiting for a HIVE observation";
 
     public AutoHiveTarget(Vision vision, CellCluster cluster) {
+        this(vision, cluster, AutoHiveTarget::toHiveFieldPose);
+    }
+
+    public AutoHiveTarget(Vision vision, CellCluster cluster,
+                          Function<Pose, Pose2D> fieldPoseFromPedro) {
         if (cluster == null || !cluster.isForAlliance(vision.getAlliance())) {
             throw new IllegalArgumentException("The CELL must belong to the vision alliance");
         }
         this.vision = vision;
         this.cluster = cluster;
+        this.fieldPoseFromPedro = Objects.requireNonNull(fieldPoseFromPedro);
     }
 
     public void update(Pose pedroPose) {
@@ -34,7 +44,7 @@ public class AutoHiveTarget {
             status = "Invalid Pedro pose";
             return;
         }
-        Pose2D fieldPose = toHiveFieldPose(pedroPose);
+        Pose2D fieldPose = fieldPoseFromPedro.apply(pedroPose);
         double[] target = fieldTarget();
         int requiredTagCount = Math.max(1, VisionConstants.minimumBotposeTagCount);
         if (vision.getRawRobotFieldPose().isPresent()
@@ -72,7 +82,7 @@ public class AutoHiveTarget {
 
     public double distanceCmAt(Pose pedroPose) {
         double[] target = fieldTarget();
-        return target == null ? Double.NaN : distanceToCellCm(toHiveFieldPose(pedroPose), target);
+        return target == null ? Double.NaN : distanceToCellCm(fieldPoseFromPedro.apply(pedroPose), target);
     }
 
     private static double distanceToCellCm(Pose2D fieldPose, double[] target) {

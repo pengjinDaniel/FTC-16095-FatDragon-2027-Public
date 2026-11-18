@@ -143,7 +143,7 @@ public class Drive extends SubsystemBase {
         lastValidDriverHeadingRadians = getDriverHeadingRadians();
         lastValidDriverHeadingNanos = readStarted;
         pinpointBadReadStreak = 0;
-        if (poseEstimator != null && hasHealthyOdometryForFusion()) {
+        if (poseEstimator != null && hasHealthyOdometry()) {
             long sampleNanos = readStarted + (long) (pinpointReadDurationMs * 500_000.0);
             poseEstimator.updateOdometry(sampleNanos, odometry);
         }
@@ -272,7 +272,7 @@ public class Drive extends SubsystemBase {
 
     public boolean addTimedVisionPose(Pose2D pose, double frameTimestamp, long captureNanos,
                                       long nowNanos, double xyStdMeters, boolean allowReanchor) {
-        if (poseEstimator == null || !hasHealthyOdometryForFusion() || !isFinitePose(pose)) {
+        if (poseEstimator == null || !hasHealthyOdometry() || !isFinitePose(pose)) {
             return false;
         }
         boolean accepted = poseEstimator.addVisionMeasurement(
@@ -281,13 +281,22 @@ public class Drive extends SubsystemBase {
         return accepted;
     }
 
-    private boolean hasHealthyOdometryForFusion() {
+    private boolean hasHealthyOdometry() {
         return DriveConstants.pinpointConfigurationConfirmed && !pinpointConfigurationLost
                 && !pinpointReadInterrupted
                 && pinpoint.getDeviceStatus() == GoBildaPinpointDriver.DeviceStatus.READY;
     }
 
     public boolean updateVisionPose(Pose2D pose, double frameTimestamp, long nowNanos) {
+        return updateVisionPose(pose, frameTimestamp, false);
+    }
+
+    // Vision has already checked the correction against three consistent observations.
+    public boolean applyConfirmedVisionPose(Pose2D pose, double frameTimestamp) {
+        return updateVisionPose(pose, frameTimestamp, true);
+    }
+
+    private boolean updateVisionPose(Pose2D pose, double frameTimestamp, boolean confirmedCorrection) {
         if (poseEstimator != null) return false;
         if (!DriveConstants.pinpointConfigurationConfirmed) {
             localizationStatus = "Pinpoint configuration needs confirmation";
@@ -312,26 +321,24 @@ public class Drive extends SubsystemBase {
             return false;
         }
         lastProcessedVisionTimestamp = frameTimestamp;
-        if (!Double.isFinite(DriveConstants.maximumVisionPositionDifferenceInches)
+        if (!confirmedCorrection && (!Double.isFinite(DriveConstants.maximumVisionPositionDifferenceInches)
                 || DriveConstants.maximumVisionPositionDifferenceInches < 0.0
                 || !Double.isFinite(DriveConstants.maximumVisionHeadingDifferenceDegrees)
                 || DriveConstants.maximumVisionHeadingDifferenceDegrees < 0.0
-                || DriveConstants.visionRejectedFramesBeforeOverride < 1) {
+                || DriveConstants.visionRejectedFramesBeforeOverride < 1)) {
             localizationStatus = "Invalid vision correction gates";
             resetVisionRejectionSequence();
             return false;
         }
         Pose2D predictedPose = pinpoint.getPosition();
         boolean initialized = fieldPoseInitialized;
-        double positionDifference = isFinitePose(predictedPose) ? Math.hypot(
-                pose.getX(DistanceUnit.INCH) - predictedPose.getX(DistanceUnit.INCH),
-                pose.getY(DistanceUnit.INCH) - predictedPose.getY(DistanceUnit.INCH)) : Double.NaN;
-        double headingDifference = isFinitePose(predictedPose) ? Math.abs(Math.IEEEremainder(
-                pose.getHeading(AngleUnit.DEGREES) - predictedPose.getHeading(AngleUnit.DEGREES),
-                360.0)) : Double.NaN;
-        boolean outsideGate = initialized && (
-                positionDifference > DriveConstants.maximumVisionPositionDifferenceInches
-                || headingDifference > DriveConstants.maximumVisionHeadingDifferenceDegrees);
+        boolean outsideGate = !confirmedCorrection && initialized && isFinitePose(predictedPose)
+                && (Math.hypot(pose.getX(DistanceUnit.INCH) - predictedPose.getX(DistanceUnit.INCH),
+                               pose.getY(DistanceUnit.INCH) - predictedPose.getY(DistanceUnit.INCH))
+                           > DriveConstants.maximumVisionPositionDifferenceInches
+                    || Math.abs(Math.IEEEremainder(pose.getHeading(AngleUnit.DEGREES)
+                                   - predictedPose.getHeading(AngleUnit.DEGREES), 360.0))
+                           > DriveConstants.maximumVisionHeadingDifferenceDegrees);
         if (outsideGate) {
             rejectedVisionFrameCount++;
             if (rejectedVisionFrameCount < DriveConstants.visionRejectedFramesBeforeOverride) {
@@ -399,7 +406,7 @@ public class Drive extends SubsystemBase {
     }
 
     public String getLocalizationStatus() {
-        return poseEstimator != null && hasHealthyOdometryForFusion()
+        return poseEstimator != null && hasHealthyOdometry()
                 ? poseEstimator.getStatus(System.nanoTime()) : localizationStatus;
     }
 
@@ -409,15 +416,22 @@ public class Drive extends SubsystemBase {
 
     public boolean isFieldPoseInitialized() {
         if (poseEstimator != null) {
-            return hasHealthyOdometryForFusion() && poseEstimator.isUsable(System.nanoTime());
+            return hasHealthyOdometry() && poseEstimator.isUsable(System.nanoTime());
         }
         return fieldPoseInitialized && !pinpointReadInterrupted
                 && pinpoint.getDeviceStatus() == GoBildaPinpointDriver.DeviceStatus.READY;
     }
 
     public double getTranslationSpeedInchesPerSecond() {
-        return isFieldPoseInitialized() ? Math.hypot(
-                pinpoint.getVelX(DistanceUnit.INCH), pinpoint.getVelY(DistanceUnit.INCH)) : Double.NaN;
+        return isFieldPoseInitialized() ? getTranslationSpeed(DistanceUnit.INCH) : Double.NaN;
+    }
+
+    public double getOdometryTranslationSpeedCmPerSecond() {
+        return hasHealthyOdometry() ? getTranslationSpeed(DistanceUnit.CM) : Double.NaN;
+    }
+
+    private double getTranslationSpeed(DistanceUnit unit) {
+        return Math.hypot(pinpoint.getVelX(unit), pinpoint.getVelY(unit));
     }
 
     public double getHeadingVelocityDegreesPerSecond() {

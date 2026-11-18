@@ -6,6 +6,7 @@ import com.arcrobotics.ftclib.command.RunCommand;
 import com.arcrobotics.ftclib.command.button.Trigger;
 import com.arcrobotics.ftclib.gamepad.GamepadEx;
 import com.arcrobotics.ftclib.gamepad.GamepadKeys;
+import com.qualcomm.robotcore.util.RobotLog;
 
 import org.firstinspires.ftc.teamcode.commands.DriveCommand;
 import org.firstinspires.ftc.teamcode.commands.IntakeCommand;
@@ -47,7 +48,7 @@ public abstract class TeleOpBase extends CommandOpMode {
     }
 
     protected Vision createVision() {
-        return new Vision(hardwareMap, getAlliance());
+        return new Vision(hardwareMap, getAlliance(), isAutoAimEnabled());
     }
 
     @Override
@@ -58,12 +59,13 @@ public abstract class TeleOpBase extends CommandOpMode {
         stopLatched = false;
         autoAimDisableHoldStartedAtNanos = -1;
         waitForAimDisableRelease = false;
-        drive = new Drive(hardwareMap,
-                isAutoAimEnabled() && DriveConstants.fusedTeleOpLocalizationEnabled);
+        drive = new Drive(hardwareMap);
         shooter = new Shooter(hardwareMap);
         intake = new Intake(hardwareMap);
         transit = new Transit(hardwareMap);
         vision = createVision();
+        // Competition TeleOp reads Limelight on its released-RT path.
+        if (isAutoAimEnabled()) CommandScheduler.getInstance().unregisterSubsystem(vision);
         autoAim = new AutoAimController();
         GamepadEx gamepadEx = new GamepadEx(gamepad1);
         gamepadEx2 = new GamepadEx(gamepad2);
@@ -91,8 +93,7 @@ public abstract class TeleOpBase extends CommandOpMode {
         }, shooter));
 
         // The scheduler refreshes sensors before buttons and command execution.
-        CommandScheduler.getInstance().addButton(() -> vision.updateAimTarget(
-                drive, stopLatched || gamepad1.b, aimRequested));
+        CommandScheduler.getInstance().addButton(this::updateAimTarget);
         CommandScheduler.getInstance().addButton(() -> intake.setReverseRequested(
                 gamepadEx.getButton(GamepadKeys.Button.LEFT_BUMPER)));
 
@@ -110,6 +111,7 @@ public abstract class TeleOpBase extends CommandOpMode {
     @Override
     public void run() {
         if (started) updateSecondGamepad(System.nanoTime());
+        boolean wasAiming = aimRequested;
         aimRequested = gamepad1.right_trigger > TeleOpConstants.triggerThreshold;
 
         if (gamepad1.b) {
@@ -123,13 +125,26 @@ public abstract class TeleOpBase extends CommandOpMode {
             autoAim.reset();
             stopMechanisms();
             drive.periodic();
-            vision.update();
-            vision.updateAimTarget(drive, true, aimRequested);
+            if (!isAutoAimEnabled()) vision.update();
+            updateAimTarget();
         } else {
             super.run();
         }
 
+        if (aimRequested && !wasAiming && !stopLatched && isAutoAimEnabled()) {
+            RobotLog.ii("TeleOpCalibration", "%s RT press | %s", getAlliance(), vision.getOdometryCalibrationDiagnostics());
+        }
         showTelemetry();
+    }
+
+    private void updateAimTarget() {
+        boolean rt = started ? aimRequested : gamepad1.right_trigger > TeleOpConstants.triggerThreshold;
+        boolean stopped = stopLatched || gamepad1.b;
+        if (isAutoAimEnabled()) {
+            vision.updateOdometryAimTarget(drive, stopped, rt);
+        } else {
+            vision.updateAimTarget(drive, stopped, rt);
+        }
     }
 
     private boolean areSecondGamepadTriggersHeld() {
@@ -197,17 +212,6 @@ public abstract class TeleOpBase extends CommandOpMode {
                 shooter.getLeftVelocity(), shooter.getRightVelocity(), shooterTarget,
                 !shooterHasTarget ? "未设目标" : shooter.isReady() ? "已达速" : "未达速");
         if (isAutoAimEnabled()) {
-            Pose2D visualPose = vision.getCorrectedRobotFieldPose().orElse(null);
-            String visualCoordinates = visualPose == null ? vision.getPoseStatus()
-                    : String.format(java.util.Locale.US, "X %.1f / Y %.1f cm / H %+.1f°",
-                    visualPose.getX(DistanceUnit.CM), visualPose.getY(DistanceUnit.CM),
-                    visualPose.getHeading(AngleUnit.DEGREES));
-            String poseDifference = !located || visualPose == null ? "无法比较"
-                    : String.format(java.util.Locale.US, "ΔX %+.1f / ΔY %+.1f cm / ΔH %+.1f°",
-                    pose.getX(DistanceUnit.CM) - visualPose.getX(DistanceUnit.CM),
-                    pose.getY(DistanceUnit.CM) - visualPose.getY(DistanceUnit.CM),
-                    Math.IEEEremainder(pose.getHeading(AngleUnit.DEGREES)
-                            - visualPose.getHeading(AngleUnit.DEGREES), 360.0));
             Pose2D rawOdometry = drive.getRawOdometryPose();
             boolean finiteOdometry = rawOdometry != null
                     && Double.isFinite(rawOdometry.getX(DistanceUnit.CM))
@@ -218,12 +222,11 @@ public abstract class TeleOpBase extends CommandOpMode {
                     rawOdometry.getX(DistanceUnit.CM), rawOdometry.getY(DistanceUnit.CM),
                     rawOdometry.getHeading(AngleUnit.DEGREES));
             telemetry.addData("OD", "%s（%s）", odometryCoordinates, located ? "场地有效" : "场地不可用");
-            telemetry.addData("LL", visualCoordinates);
-            telemetry.addData("OD−LL", poseDifference);
+            telemetry.addData("视觉校准", vision.getCalibrationStatus());
+            telemetry.addData(aimRequested ? "按下 RT 时的校准" : "最近校准对比", vision.getOdometryCalibrationDiagnostics());
             telemetry.addData("Pinpoint读包", drive.getPinpointReadDiagnostics());
             telemetry.addData("上次坏读", drive.getLastPinpointReadFailure());
             telemetry.addData("定位", drive.getLocalizationStatus());
-            telemetry.addData("视觉校准", vision.getCalibrationStatus());
             if (autoAimEnabled && aimRequested) {
                 double yawError = shootAssistCommand.getAdjustedYawErrorDegrees();
                 double headingVelocity = drive.getHeadingVelocityDegreesPerSecond();
@@ -314,9 +317,8 @@ public abstract class TeleOpBase extends CommandOpMode {
             initialize();
             while (opModeInInit() && !isStopRequested()) {
                 drive.periodic();
-                vision.update();
-                vision.updateAimTarget(drive, gamepad1.b,
-                        gamepad1.right_trigger > TeleOpConstants.triggerThreshold);
+                if (!isAutoAimEnabled()) vision.update();
+                updateAimTarget();
                 showTelemetry();
                 idle();
             }

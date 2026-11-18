@@ -6,10 +6,12 @@ import com.pedropathing.algorithm.ForesightConfig;
 import com.pedropathing.drivetrain.DrivePowers;
 import com.pedropathing.drivetrain.Drivetrain;
 import com.pedropathing.follower.Follower;
+import com.pedropathing.localization.MotionState;
 import com.pedropathing.math.Pose;
 import com.pedropathing.math.Velocity;
 import com.pedropathing.paths.Path;
 import com.qualcomm.hardware.gobilda.GoBildaPinpointDriver;
+import com.qualcomm.hardware.gobilda.GoBildaPinpointDriver.DeviceStatus;
 import com.qualcomm.robotcore.hardware.DcMotor;
 import com.qualcomm.robotcore.hardware.Servo;
 import com.qualcomm.robotcore.util.ElapsedTime;
@@ -258,6 +260,7 @@ public class TestAutoCheck {
 
     public static void main(String[] args) throws Exception {
         checkHive();
+        checkBlue3TipBadReadFallback();
         check(Constants.createAlgorithm() != null, "FTC1 calibration creates a Foresight algorithm");
         ForesightConfig calibratedConfig = Constants.foresightConfig;
         boolean missingConfig = false;
@@ -577,6 +580,50 @@ public class TestAutoCheck {
             shot.end(true);
             TransitConstants.feedReverseTime = reverseTime;
         }
+    }
+
+    private static void checkBlue3TipBadReadFallback() throws Exception {
+        Blue3Tip auto = new Blue3Tip();
+        Blue3Tip.CachedPinpointLocalizer localizer = new Blue3Tip.CachedPinpointLocalizer(null, null);
+        set(auto, Blue3Tip.class, "localizer", localizer);
+        Method ready = Blue3Tip.class.getDeclaredMethod("localizationReady");
+        ready.setAccessible(true);
+        MotionState good = MotionState.ofVelocity(new Pose(4, 5, 0.2), new Velocity(8, 9, 0.1));
+        MotionState partialRead = MotionState.ofVelocity(new Pose(70, 50, 1.2), new Velocity(0, 40, 1.0));
+        MotionState recovered = MotionState.ofVelocity(new Pose(5, 6, 0.3), new Velocity(7, 8, 0.2));
+
+        localizer.acceptSample(DeviceStatus.FAULT_BAD_READ, partialRead, 0);
+        check(!(boolean) ready.invoke(auto), "a bad read cannot start Auto without a valid sample");
+        localizer.acceptSample(DeviceStatus.READY, good, 10_000_000L);
+        check((boolean) ready.invoke(auto) && localizer.isFresh(), "a finite READY sample is accepted");
+
+        localizer.acceptSample(DeviceStatus.FAULT_BAD_READ, partialRead, 30_000_000L);
+        check((boolean) ready.invoke(auto) && localizer.usingCachedSample() && !localizer.isFresh(),
+                "one bad frame preserves the running Auto");
+        Motors motors = new Motors();
+        Follower follower = new Follower(localizer, motors, Constants.createAlgorithm());
+        follower.hold(new Pose(6, 7, 0.2));
+        follower.update(0.02);
+        check(motors.writes == 1 && follower.localizer.state() == good,
+                "Pedro can keep controlling with the prior complete sample, including velocity");
+
+        localizer.acceptSample(DeviceStatus.READY, recovered, 50_000_000L);
+        check((boolean) ready.invoke(auto) && !localizer.usingCachedSample() && localizer.state() == recovered,
+                "the next good frame restores live localization");
+        localizer.acceptSample(DeviceStatus.FAULT_BAD_READ, partialRead, 70_000_000L);
+        check((boolean) ready.invoke(auto), "a later isolated fault can use the new good sample");
+        localizer.acceptSample(DeviceStatus.FAULT_BAD_READ, partialRead, 90_000_000L);
+        check(!(boolean) ready.invoke(auto), "the second consecutive bad read stops Auto");
+
+        localizer.acceptSample(DeviceStatus.READY, good, 110_000_000L);
+        localizer.acceptSample(DeviceStatus.FAULT_BAD_READ, partialRead, 211_000_000L);
+        check(!(boolean) ready.invoke(auto), "a sample older than 100 ms cannot keep Auto running");
+        localizer.acceptSample(DeviceStatus.READY, good, 230_000_000L);
+        localizer.acceptSample(DeviceStatus.NOT_READY, partialRead, 240_000_000L);
+        check(!(boolean) ready.invoke(auto), "NOT_READY never uses the cache");
+        localizer.acceptSample(DeviceStatus.READY,
+                MotionState.ofVelocity(new Pose(4, 5, 0.2), new Velocity(Double.NaN, 0, 0)), 250_000_000L);
+        check(!(boolean) ready.invoke(auto), "a nonfinite READY sample also stops Auto");
     }
 
     private static void checkFollowerOwnership(Path path) {
