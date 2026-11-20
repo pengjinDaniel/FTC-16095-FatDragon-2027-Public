@@ -56,7 +56,6 @@ public class Intake extends SubsystemBase {
         updateMotorPower();
     }
 
-    /** Holds collected balls while aiming; feeds only after the shot gate opens. */
     public void updateShotFeed(boolean feeding) {
         jamRequested = false;
         reverseRequested = false;

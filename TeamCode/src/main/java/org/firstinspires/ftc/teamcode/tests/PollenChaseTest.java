@@ -15,19 +15,17 @@ import org.firstinspires.ftc.teamcode.subsystems.vision.VisionConstants;
 import java.util.List;
 
 public class PollenChaseTest extends LinearOpMode {
-    // Robot +X is intake-forward. Camera translation is in cm; positive pitch points upward.
     private static final double CAMERA_FORWARD_CM = -12.715;
-    private static final double CAMERA_RIGHT_CM = 0.0; // Assumes LL Right/y is zero; verify on the robot.
+    private static final double CAMERA_RIGHT_CM = 0.0;
     private static final double CAMERA_HEIGHT_CM = 20.7415;
     private static final double CAMERA_PITCH_UP_DEGREES = 50.0;
     private static final double CAMERA_YAW_DEGREES = 180.0;
-    // Center to the rear-most robot edge for yaw 180, not center to the lens.
     private static final double APPROACH_EDGE_FROM_CENTER_CM = 17.0;
     private static final double RANGE_SCALE = 1.0;
 
     private static final int PIPELINE_INDEX = 2;
     private static final double MIN_TARGET_AREA_PERCENT = 0.03;
-    private final DcMotor[] motors = new DcMotor[4]; // LF, LB, RF, RB
+    private final DcMotor[] motors = new DcMotor[4];
     private Limelight3A limelight;
     private PollenChaseController chase;
     private String visionStatus = "Waiting for pipeline 2";
@@ -58,7 +56,7 @@ public class PollenChaseTest extends LinearOpMode {
             while (opModeInInit() && !isStopRequested()) {
                 updateVision();
                 showTelemetry();
-                idle(); // INIT displays measurements; motor power remains zero.
+                idle();
             }
             if (isStopRequested()) return;
             waitForStart();
@@ -126,7 +124,6 @@ public class PollenChaseTest extends LinearOpMode {
                     || result.getTa() < MIN_TARGET_AREA_PERCENT || result.getTa() > 100.0) {
                 visionStatus = "Target area rejected";
             } else {
-                // Keep the contour and principal-pixel angles tied to the same primary target.
                 LLResultTypes.ColorResult selected = null;
                 double bestAngleDifference = Double.POSITIVE_INFINITY;
                 for (LLResultTypes.ColorResult color : result.getColorResults()) {

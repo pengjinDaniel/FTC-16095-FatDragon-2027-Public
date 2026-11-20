@@ -5,6 +5,7 @@ import static com.pedropathing.api.Paths.line;
 
 import com.arcrobotics.ftclib.command.Command;
 import com.arcrobotics.ftclib.command.CommandBase;
+import com.arcrobotics.ftclib.command.CommandOpMode;
 import com.arcrobotics.ftclib.command.CommandScheduler;
 import com.arcrobotics.ftclib.command.FunctionalCommand;
 import com.arcrobotics.ftclib.command.ParallelDeadlineGroup;
@@ -22,7 +23,6 @@ import com.pedropathing.revhub.localizers.PinpointLocalizer;
 import com.qualcomm.hardware.gobilda.GoBildaPinpointDriver;
 import com.qualcomm.hardware.gobilda.GoBildaPinpointDriver.DeviceStatus;
 import com.qualcomm.robotcore.eventloop.opmode.Autonomous;
-import com.qualcomm.robotcore.eventloop.opmode.LinearOpMode;
 import com.qualcomm.robotcore.util.ElapsedTime;
 import com.qualcomm.robotcore.util.RobotLog;
 
@@ -40,7 +40,7 @@ import org.firstinspires.ftc.teamcode.subsystems.vision.CellCluster;
 import org.firstinspires.ftc.teamcode.subsystems.vision.Vision;
 
 @Autonomous(name = "blue3tip", group = "Auto")
-public class Blue3Tip extends LinearOpMode {
+public class Blue3Tip extends CommandOpMode {
     private static final double VISUALIZER_FIELD_CENTER_INCHES = 70.75;
     private static final double FLOWER_DEPLOY_PROGRESS = 0.2308;
     private static final long SHOT_DURATION_MS = 900;
@@ -54,6 +54,7 @@ public class Blue3Tip extends LinearOpMode {
     private Intake intake;
     private Shooter shooter;
     private Transit transit;
+    private Vision vision;
     private GoBildaPinpointDriver pinpoint;
     private CachedPinpointLocalizer localizer;
     private String activePath = "INIT";
@@ -100,18 +101,20 @@ public class Blue3Tip extends LinearOpMode {
     private final Pose shoot5ToParkSegment1End = poseFactory.of(132.9232, 43.2893, 180);
     private final Pose shoot5ToParkSegment2Heading = poseFactory.of(132.9232, 43.2893, 180);
 
-    private Command autoRoutine(AutoHiveTarget audience, AutoHiveTarget opposite) {
+    private Command autoRoutine() {
+        AutoHiveTarget audience = new AutoHiveTarget(
+                vision, CellCluster.BLUE_AUDIENCE, Blue3Tip::toCellFieldPose);
+        AutoHiveTarget opposite = new AutoHiveTarget(
+                vision, CellCluster.BLUE_OPPOSITE_AUDIENCE, Blue3Tip::toCellFieldPose);
         return new SequentialCommandGroup(
                 approachShot("startToShoot1", startToShoot1(), startToShoot1, opposite),
                 shoot(opposite),
-                // Keep collecting from Flower 1 through the approach to shot 2.
                 followPath("shoot1ToFlower1", shoot1ToFlower1(), FLOWER_WAIT_MS, true)
                         .withTimeout(FLOWER_1_TIMEOUT_MS)
                         .beforeStarting(this::requestCollection),
                 approachShot("flower1ToShoot2", flower1ToShoot2(), flower1ToShoot2, audience)
                         .beforeStarting(intake::raiseFlower),
                 shoot(audience),
-                // The collection request stays active through the next approach until the shot takes over.
                 followPath("shoot2ToPreload", shoot2ToPreload()).beforeStarting(this::requestCollection),
                 approachShot("preloadToShoot3", preloadToShoot3(), preloadToShoot3, audience),
                 shoot(audience),
@@ -127,10 +130,29 @@ public class Blue3Tip extends LinearOpMode {
     }
 
     @Override
+    public void initialize() {
+        pinpoint = hardwareMap.get(GoBildaPinpointDriver.class, Constants.localizerConfig.name.get());
+        localizer = new CachedPinpointLocalizer(new PinpointLocalizer(hardwareMap, Constants.localizerConfig), pinpoint);
+        follower = new Follower(localizer, new Mecanum(hardwareMap, Constants.drivetrainConfig),
+                Constants.createAlgorithm());
+        intake = new Intake(hardwareMap);
+        shooter = new Shooter(hardwareMap);
+        transit = new Transit(hardwareMap);
+        vision = new Vision(hardwareMap, Alliance.BLUE, true);
+        follower.setPose(start);
+    }
+
+    @Override
+    public void run() {
+        if (localizationReady()) follower.update();
+        super.run();
+        showTelemetry();
+    }
+
+    @Override
     public void runOpMode() throws InterruptedException {
-        CommandScheduler.getInstance().reset();
+        reset();
         CommandScheduler scheduler = CommandScheduler.getInstance();
-        Vision vision = null;
         try {
             if (Constants.foresightConfig == null) {
                 telemetry.addLine("Run AutoTune > Foresight Tuner and export its config before running.");
@@ -139,25 +161,10 @@ public class Blue3Tip extends LinearOpMode {
                 return;
             }
 
-            pinpoint = hardwareMap.get(GoBildaPinpointDriver.class, Constants.localizerConfig.name.get());
-            localizer = new CachedPinpointLocalizer(new PinpointLocalizer(hardwareMap, Constants.localizerConfig), pinpoint);
-            follower = new Follower(localizer, new Mecanum(hardwareMap, Constants.drivetrainConfig),
-                    Constants.createAlgorithm());
-            intake = new Intake(hardwareMap);
-            shooter = new Shooter(hardwareMap);
-            transit = new Transit(hardwareMap);
-            vision = new Vision(hardwareMap, Alliance.BLUE, true);
-            AutoHiveTarget audience = new AutoHiveTarget(
-                    vision, CellCluster.BLUE_AUDIENCE, Blue3Tip::toCellFieldPose);
-            AutoHiveTarget opposite = new AutoHiveTarget(
-                    vision, CellCluster.BLUE_OPPOSITE_AUDIENCE, Blue3Tip::toCellFieldPose);
-            follower.setPose(start);
-
+            initialize();
             while (opModeInInit() && !isStopRequested()) {
                 localizer.refresh();
-                if (localizationReady()) follower.update();
-                scheduler.run();
-                showTelemetry();
+                run();
                 idle();
             }
             waitForStart();
@@ -170,18 +177,16 @@ public class Blue3Tip extends LinearOpMode {
             }
 
             follower.setPose(start);
-            Command routine = autoRoutine(audience, opposite);
-            scheduler.schedule(routine);
-            while (opModeIsActive() && scheduler.isScheduled(routine)) {
+            Command routine = autoRoutine();
+            schedule(routine);
+            while (opModeIsActive() && routine.isScheduled()) {
                 localizer.refresh();
                 if (!localizationReady()) {
                     stopDrive();
                     reportPinpointStop();
                     break;
                 }
-                follower.update();
-                scheduler.run();
-                showTelemetry();
+                run();
                 idle();
             }
         } finally {
@@ -194,12 +199,11 @@ public class Blue3Tip extends LinearOpMode {
             if (shooter != null) shooter.stop();
             if (vision != null) vision.stop();
             if (follower != null) stopDrive();
-            scheduler.reset();
+            reset();
         }
     }
 
     private static Pose2D toCellFieldPose(Pose pose) {
-        // Visualizer -Y points toward the audience; the HIVE map uses +X.
         return new Pose2D(DistanceUnit.INCH,
                 VISUALIZER_FIELD_CENTER_INCHES - pose.y(),
                 pose.x() - VISUALIZER_FIELD_CENTER_INCHES,
@@ -282,7 +286,6 @@ public class Blue3Tip extends LinearOpMode {
 
         @Override
         public void update() {
-            // Blue3Tip refreshes and validates the sample before calling Follower.update().
         }
 
         @Override
@@ -362,7 +365,7 @@ public class Blue3Tip extends LinearOpMode {
 
     private Command shoot(AutoHiveTarget target) {
         return new AutoShootCommand(follower, shooter, intake, transit, target,
-                this::localizationReady, SHOT_DURATION_MS, SHOT_TIMEOUT_MS, false) {
+                this::localizationReady, SHOT_DURATION_MS, SHOT_TIMEOUT_MS) {
             @Override
             public void execute() {
                 super.execute();

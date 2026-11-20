@@ -64,7 +64,6 @@ public abstract class TeleOpBase extends CommandOpMode {
         intake = new Intake(hardwareMap);
         transit = new Transit(hardwareMap);
         vision = createVision();
-        // Competition TeleOp reads Limelight on its released-RT path.
         if (isAutoAimEnabled()) CommandScheduler.getInstance().unregisterSubsystem(vision);
         autoAim = new AutoAimController();
         GamepadEx gamepadEx = new GamepadEx(gamepad1);
@@ -88,11 +87,10 @@ public abstract class TeleOpBase extends CommandOpMode {
             } else {
                 shooter.setDistanceTarget(
                         DistanceUnit.INCH.toCm(vision.getTargetHorizontalDistanceInches()),
-                        false); // Pre-spin only; pitch follows the shot when RT is held.
+                        false);
             }
         }, shooter));
 
-        // The scheduler refreshes sensors before buttons and command execution.
         CommandScheduler.getInstance().addButton(this::updateAimTarget);
         CommandScheduler.getInstance().addButton(() -> intake.setReverseRequested(
                 gamepadEx.getButton(GamepadKeys.Button.LEFT_BUMPER)));
@@ -153,7 +151,6 @@ public abstract class TeleOpBase extends CommandOpMode {
     }
 
     private void startSecondGamepad() {
-        // Treat inputs already held at START as the initial state.
         gamepadEx2.readButtons();
         waitForAimDisableRelease = areSecondGamepadTriggersHeld();
     }
@@ -248,7 +245,6 @@ public abstract class TeleOpBase extends CommandOpMode {
             target += "；当前选择：" + cellLabel(selected);
         }
         telemetry.addData("应瞄准框", target);
-        // The field pose used for CELL selection and aiming.
         telemetry.addData("场地坐标（中心0/0，X朝观众）", located
                 ? String.format(java.util.Locale.US, "X %.1f cm / Y %.1f cm / 朝向 %.1f°",
                         pose.getX(DistanceUnit.CM), pose.getY(DistanceUnit.CM), pose.getHeading(AngleUnit.DEGREES))

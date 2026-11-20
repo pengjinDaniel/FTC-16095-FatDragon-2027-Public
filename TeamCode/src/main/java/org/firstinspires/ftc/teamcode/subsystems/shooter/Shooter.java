@@ -17,10 +17,8 @@ public class Shooter extends SubsystemBase {
     private final DcMotorEx leftShooter;
     private final DcMotorEx rightShooter;
     private final Servo pitchServo;
-    // Both motors drive one flywheel; only the right encoder supplies speed feedback.
     private final PIDFController rightController;
     private final DoubleSupplier distanceVelocityScale;
-    // Zero keeps distance-based velocity; positive values override velocity only, not pitch.
     private final DoubleSupplier fixedDistanceTargetVelocity;
 
     private double distanceVelocityOffsetTicksPerSecond;
@@ -42,17 +40,14 @@ public class Shooter extends SubsystemBase {
         this(hardwareMap, () -> 1.0);
     }
 
-    /** Per-instance scaling for distance-based targets; direct velocity/fixed-power tests are unchanged. */
     public Shooter(HardwareMap hardwareMap, DoubleSupplier distanceVelocityScale) {
         this(hardwareMap, distanceVelocityScale, () -> 0.0);
     }
 
-    /** Fixed encoder velocity for all distance-based shots; pitch still follows distance. */
     public Shooter(HardwareMap hardwareMap, double fixedVelocityTicksPerSecond) {
         this(hardwareMap, () -> 1.0, constantVelocity(fixedVelocityTicksPerSecond));
     }
 
-    /** Allows an autonomous routine to select its fixed velocity for each approach. */
     public static Shooter withFixedShotVelocity(HardwareMap hardwareMap, DoubleSupplier velocity) {
         Objects.requireNonNull(velocity);
         return new Shooter(hardwareMap, () -> 1.0, () -> requirePositiveVelocity(velocity.getAsDouble()));
@@ -147,7 +142,6 @@ public class Shooter extends SubsystemBase {
             if (point[0] <= distanceCm && (lower == null || point[0] > lower[0])) lower = point;
             if (point[0] >= distanceCm && (upper == null || point[0] < upper[0])) upper = point;
         }
-        // Adjacent points also cover the gap between tables. Clamp beyond the outer endpoints.
         if (lower == null) lower = upper;
         if (upper == null) upper = lower;
         double fraction = lower == upper ? 0.0
@@ -167,7 +161,6 @@ public class Shooter extends SubsystemBase {
         return areVelocityControlValuesCalibrated() && getDistanceShotPoints() != null;
     }
 
-    /** Returns the ordered near and far points, or null when the tables are invalid. */
     public static double[][] getDistanceShotPoints() {
         double[][] near = ShooterConstants.nearShotPoints;
         double[][] far = ShooterConstants.farShotPoints;

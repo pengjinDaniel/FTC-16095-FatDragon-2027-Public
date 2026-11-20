@@ -3,7 +3,6 @@ package org.firstinspires.ftc.teamcode.subsystems.drive;
 import com.arcrobotics.ftclib.controller.PIDFController;
 import java.lang.reflect.Field;
 
-/** Exercises the production auto-aim controller with the real FTCLib implementation. */
 public class AutoAimPidfCheck {
     private static int checks;
 

@@ -90,7 +90,6 @@ public class Drive extends SubsystemBase {
         long readStarted = readPinpoint("periodic");
         periodicBadRead = pinpoint.getDeviceStatus() == GoBildaPinpointDriver.DeviceStatus.FAULT_BAD_READ;
         if (periodicBadRead) {
-            // Preserve the field registration while the interrupted read awaits validation.
             localizationStatus = "Pinpoint bad read; waiting for valid odometry";
             return;
         }
@@ -108,7 +107,6 @@ public class Drive extends SubsystemBase {
             return;
         }
         if (pinpointReadInterrupted) {
-            // Read configuration only after an interruption, not on every control loop.
             double xOffset = pinpoint.getXOffset(DistanceUnit.MM);
             double yOffset = pinpoint.getYOffset(DistanceUnit.MM);
             if (pinpoint.getDeviceStatus() != GoBildaPinpointDriver.DeviceStatus.READY) {
@@ -186,7 +184,6 @@ public class Drive extends SubsystemBase {
         TimestampedI2cData packet = null;
         for (TimestampedI2cData sample : pinpointReadHistory.getHistoryQueue()) packet = sample;
         if (packet == null || packet.data == null) return "No fresh I2C reply captured";
-        // FTC Hardware 12.0.0 defaults to register 18 with ten 4-byte bulk values.
         if (packet.register != 18 || packet.data.length < 40) {
             return String.format(Locale.US, "Unexpected I2C reply: register %d / %d bytes",
                     packet.register, packet.data.length);
@@ -241,13 +238,11 @@ public class Drive extends SubsystemBase {
                         lastPinpointBadReadReason);
     }
 
-    // A field pose is available only when the selected localization path is ready.
     public Pose2D getPose() {
         if (!isFieldPoseInitialized()) return UNKNOWN_POSE;
         return poseEstimator == null ? pinpoint.getPosition() : poseEstimator.getEstimatedPose();
     }
 
-    // A local odometry frame is sufficient for comparing motion between visual observations.
     public Pose2D getOdometryPose() {
         return pinpoint.getDeviceStatus() == GoBildaPinpointDriver.DeviceStatus.READY
                 ? pinpoint.getPosition() : UNKNOWN_POSE;
@@ -257,7 +252,6 @@ public class Drive extends SubsystemBase {
         return pinpoint.getDeviceStatus();
     }
 
-    // Diagnostics may inspect cached device values even when control cannot use them.
     public Pose2D getRawOdometryPose() {
         return pinpoint.getPosition();
     }
@@ -291,7 +285,6 @@ public class Drive extends SubsystemBase {
         return updateVisionPose(pose, frameTimestamp, false);
     }
 
-    // Vision has already checked the correction against three consistent observations.
     public boolean applyConfirmedVisionPose(Pose2D pose, double frameTimestamp) {
         return updateVisionPose(pose, frameTimestamp, true);
     }
@@ -361,7 +354,6 @@ public class Drive extends SubsystemBase {
             return false;
         }
         if (Double.isFinite(driverHeadingReferenceRadians) && Double.isFinite(previousHeading)) {
-            // A field-heading correction must not change the driver's headless reference.
             double correction = Math.IEEEremainder(
                     pose.getHeading(AngleUnit.RADIANS) - previousHeading, 2.0 * Math.PI);
             driverHeadingReferenceRadians = Math.IEEEremainder(
@@ -460,7 +452,6 @@ public class Drive extends SubsystemBase {
             return;
         }
         double heading = getDriverHeadingRadians();
-        // A brief periodic fault can reuse the last valid angle for manual translation.
         if (!Double.isFinite(heading) && periodicBadRead
                 && pinpoint.getDeviceStatus() == GoBildaPinpointDriver.DeviceStatus.FAULT_BAD_READ
                 && System.nanoTime() - lastValidDriverHeadingNanos <= DRIVER_HEADING_HOLD_NANOS) {
@@ -470,7 +461,6 @@ public class Drive extends SubsystemBase {
             moveRobot(forward, strafe, turn);
             return;
         }
-        // Field heading is CCW-positive; joystick strafe is right-positive.
         double robotForward = forward * Math.cos(heading) - strafe * Math.sin(heading);
         double robotStrafe = forward * Math.sin(heading) + strafe * Math.cos(heading);
         moveRobot(robotForward, robotStrafe, turn);

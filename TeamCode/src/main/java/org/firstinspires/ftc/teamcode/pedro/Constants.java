@@ -20,8 +20,6 @@ import org.firstinspires.ftc.teamcode.subsystems.drive.DriveConstants;
 import java.util.OptionalDouble;
 
 public class Constants {
-    // Motor names, directions and pod geometry are shared with the competition Drive.
-    // Apply measured hardware changes to DriveConstants; its pod offsets are in millimeters.
     public static MecanumConfig drivetrainConfig = new MecanumConfig(c -> {
         c.frontLeftName.set(DriveConstants.leftFrontMotorName);
         c.backLeftName.set(DriveConstants.leftBackMotorName);
@@ -45,7 +43,6 @@ public class Constants {
         c.yPodDirection.set(DriveConstants.pinpointStrafePodDirection);
     });
 
-    // FTC1 measurements exported by the Foresight Tuner.
     public static ForesightConfig foresightConfig = new ForesightConfig(
             c -> {
                 Controller primaryTranslationalForward = Controller.proportional(0.29362974330914304);

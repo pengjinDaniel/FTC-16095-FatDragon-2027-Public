@@ -9,7 +9,6 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import sun.misc.Unsafe;
 
-/** Checks production shot outputs without connecting motors or servos. */
 public class ShooterDistanceCheck {
     private static int checks;
     private static final double[] velocities = {1000.0, 1000.0};
@@ -66,7 +65,6 @@ public class ShooterDistanceCheck {
     }
 
     private static void configure() {
-        // Synthetic test inputs, not calibration values for the robot.
         ShooterConstants.maxPower = 1.0;
         ShooterConstants.pitchMinPosition = 0.0;
         ShooterConstants.pitchMaxPosition = 0.55;
@@ -185,7 +183,7 @@ public class ShooterDistanceCheck {
     private static void overspeedMustReducePower() throws Exception {
         Shooter shooter = shooter();
         shooter.setTargetVelocity(1740.0);
-        velocities[0] = 0.0; // The shared flywheel has only the right encoder connected.
+        velocities[0] = 0.0;
         velocities[1] = 1740.0;
         shooter.periodic();
         double atTargetLeftPower = shooter.getLeftPower();

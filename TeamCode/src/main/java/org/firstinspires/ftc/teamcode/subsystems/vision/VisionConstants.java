@@ -9,8 +9,6 @@ public class VisionConstants {
     public static double minimumTargetArea = 0.01;
     public static int minimumBotposeTagCount = 1;
 
-    // Historical fixed CELL opening targets from the successful flat-HIVE setup.
-    // Field-center origin, inches, +X toward the audience; ordered by CellCluster tuning index.
     public static double[][] cellTargetFieldXYInches = {
             {-17.7, -12.75}, {17.7, -12.75},
             {17.7, 12.75}, {-17.7, 12.75}

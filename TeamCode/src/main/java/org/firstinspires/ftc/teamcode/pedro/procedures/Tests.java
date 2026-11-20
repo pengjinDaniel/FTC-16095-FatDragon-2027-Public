@@ -390,7 +390,6 @@ class TestsShape extends TuningOpMode<Boolean> {
         this.distance = distance;
     }
 
-    // China Championship examples translated from their (72,72) start to a local (0,0) start.
     static Path triangle(double distance) {
         if (!Double.isFinite(distance) || distance <= 0) throw new IllegalArgumentException("Triangle size must be positive.");
         Pose start = Pose.zero();
@@ -646,7 +645,6 @@ class TestsPose extends TuningOpMode<Boolean> {
         if (localizer instanceof PinpointLocalizer) {
             GoBildaPinpointDriver pinpoint = hardwareMap.get(
                     GoBildaPinpointDriver.class, Constants.localizerConfig.name.get());
-            // Offset getters perform separate I2C reads; retain this startup snapshot.
             telemetry.addData("Configured X/Y pod offsets (mm)", "%.2f / %.2f",
                     Constants.localizerConfig.xPodOffset.get(), Constants.localizerConfig.yPodOffset.get())
                     .setRetained(true);

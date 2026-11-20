@@ -6,7 +6,6 @@ import com.qualcomm.robotcore.hardware.DcMotorSimple;
 
 @Config
 public class DriveConstants {
-    // User-measured robot footprint in mm (2026-11-04): forward/back length, side-to-side width.
     public static double robotLengthMm = 419.0;
     public static double robotWidthMm = 368.0;
 
@@ -23,7 +22,6 @@ public class DriveConstants {
 
     public static String pinpointName = "pinpoint";
     public static boolean pinpointConfigurationConfirmed = true;
-    // Effective offset validated on this robot with the centered Pedro Pose Test.
     public static double pinpointXOffsetMm = 98.5;
     public static double pinpointYOffsetMm = -74.0;
     public static GoBildaPinpointDriver.EncoderDirection pinpointForwardPodDirection =
@@ -43,10 +41,10 @@ public class DriveConstants {
     public static double positionLockMaxSpeedInchesPerSecond = 2.0;
     public static double positionLockStableTimeSeconds = 0.15;
     public static volatile double autoAimKp = -1.0;
-    public static volatile double autoAimKi = -0.03;
+    public static volatile double autoAimKi = -0.032;
     public static volatile double autoAimKd = -0.017;
     public static volatile double autoAimKf = 0.0;
-    public static volatile double autoAimKs = 0.05; //0.054
+    public static volatile double autoAimKs = 0.05;
     public static volatile double autoAimYawToTurnSign = 1.0;
     public static volatile double autoAimMaxTurnPower = 0.65;
     public static volatile double autoAimTestMaxTurnPower = 0.65;

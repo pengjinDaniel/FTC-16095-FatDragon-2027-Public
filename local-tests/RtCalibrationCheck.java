@@ -39,7 +39,6 @@ import org.firstinspires.ftc.teamcode.subsystems.transit.Transit;
 import org.firstinspires.ftc.teamcode.subsystems.transit.TransitConstants;
 import sun.misc.Unsafe;
 
-/** Replays continuous idle calibration, RT controls, read diagnostics and odometry aiming. */
 public class RtCalibrationCheck {
     private static final Unsafe U = allocator();
     private static int checks;

@@ -13,7 +13,7 @@ import org.firstinspires.ftc.teamcode.subsystems.intake.Intake;
 import org.firstinspires.ftc.teamcode.subsystems.shooter.Shooter;
 import org.firstinspires.ftc.teamcode.subsystems.shooter.ShooterConstants;
 import org.firstinspires.ftc.teamcode.subsystems.transit.Transit;
-
+@TeleOp(name = "Shooter PID", group = "TeleOp")
 public class ShooterPID extends OpMode {
     private static final String diagnosticVersion = "ShooterPID-RT-FEED-4";
     private static final double velocityStep = 10.0;

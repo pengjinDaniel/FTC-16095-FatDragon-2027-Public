@@ -196,7 +196,6 @@ public class Vision extends SubsystemBase {
             lastPhysicalFrameTimestamp = frameTimestamp;
             lastPhysicalFrameSeenNanos = nowNanos;
         }
-        // SDK staleness measures HTTP reception age, not whether the camera frame advanced.
         physicalFrameAgeMs = (nowNanos - lastPhysicalFrameSeenNanos) / 1_000_000L;
         if (physicalFrameAgeMs > VisionConstants.maxResultAgeMs) {
             poseStatus = "Limelight physical frame frozen: " + physicalFrameAgeMs + " ms";
@@ -228,7 +227,6 @@ public class Vision extends SubsystemBase {
             if (VisionMath.getRobotSpacePositionInches(pose).isPresent()) {
                 poses.put(id, pose);
             }
-            // JSON fiducial ta is a fraction; compare areas in percentage units.
             double area = fiducial.getTargetArea() * 100.0;
             if (Double.isFinite(area) && area >= VisionConstants.minimumTargetArea) {
                 usableTagCount++;
@@ -284,7 +282,6 @@ public class Vision extends SubsystemBase {
         observedClusterStates = Collections.unmodifiableMap(states);
     }
 
-    // Distance-only callers share idle calibration without starting an RT aim session.
     public void updateAimTarget(Drive drive, boolean stopped) {
         updateAimTarget(drive, stopped, false);
     }
@@ -400,7 +397,6 @@ public class Vision extends SubsystemBase {
                 robotPose, targetXInches, targetYInches, VisionConstants.shooterYawDegrees);
         validAimingTarget = Double.isFinite(yawErrorDegrees)
                 && Double.isFinite(targetHorizontalDistanceInches);
-        // Retain the last observed HIVE geometry while odometry continues through tag loss.
         targetHiveState = !includeHiveState || !hasKnownHiveAngle ? HiveState.UNKNOWN
                 : Math.abs(lastKnownHiveAngleDegrees) <= VisionConstants.highHiveTiltThresholdDegrees
                 ? HiveState.MIDDLE : -Math.sin(Math.toRadians(lastKnownHiveAngleDegrees))
@@ -559,7 +555,6 @@ public class Vision extends SubsystemBase {
         for (CalibrationDelta delta : idleCalibrationDeltas) {
             xSum += delta.xCm;
             ySum += delta.yCm;
-            // Average the heading corrections around the newest one to handle +/-180 degrees.
             headingOffsetSum += Math.IEEEremainder(delta.headingDegrees - latest.headingDegrees, 360.0);
         }
         int count = idleCalibrationDeltas.size();
@@ -608,7 +603,6 @@ public class Vision extends SubsystemBase {
             calibrationStatus = "MT1 capture timestamp is stale or invalid";
             return;
         }
-        // The camera clock identifies frames. Estimate exposure time in the Hub monotonic clock.
         long captureNanos = currentResultObservedNanos - (long) (ageAtObservationMs * 1e6);
         if (lastFusionCaptureNanos != Long.MIN_VALUE) {
             long gapNanos = captureNanos - lastFusionCaptureNanos;
@@ -713,7 +707,6 @@ public class Vision extends SubsystemBase {
                 : "none";
         return comparison + " / Last correction " + lastCorrection;
     }
-    // Retained for existing callers; continuous calibration has no cooldown.
     public double getCalibrationCooldownRemainingSeconds() {
         return 0.0;
     }

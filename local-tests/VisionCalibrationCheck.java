@@ -9,7 +9,6 @@ import org.firstinspires.ftc.teamcode.subsystems.drive.Drive;
 import org.firstinspires.ftc.teamcode.subsystems.drive.DriveConstants;
 import sun.misc.Unsafe;
 
-/** Exercises continuous calibration, direct pose writes, metadata and odometry/headless continuation. */
 public class VisionCalibrationCheck {
     private static int checks;
     private static final Unsafe ALLOCATOR = allocator();
@@ -170,7 +169,6 @@ public class VisionCalibrationCheck {
                 getFiducialResults() { return Collections.singletonList(tag); }
         @Override public int getBotposeTagCount() { return count; }
         @Override public org.firstinspires.ftc.robotcore.external.navigation.Pose3D getBotpose() {
-            // Real SDK fallback when the JSON botpose array is absent.
             return createPose3DRobot(new double[0]);
         }
     }

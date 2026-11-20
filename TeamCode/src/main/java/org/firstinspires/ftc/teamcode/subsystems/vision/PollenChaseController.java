@@ -2,14 +2,12 @@ package org.firstinspires.ftc.teamcode.subsystems.vision;
 
 import java.util.List;
 
-/** Size-based POLLEN ranging and camera-relative approach, without a fixed target height. */
 public final class PollenChaseController {
     public static final double POLLEN_RADIUS_CM = 3.55;
     public static final double STOP_GAP_CM = 3.0;
     public static final double MAX_FRAME_AGE_MS = 100.0;
     public static final int IMAGE_WIDTH = 640;
     public static final int IMAGE_HEIGHT = 480;
-    // Nominal full-frame Limelight 3A optics. Pipeline resolution and zoom must match.
     public static final double FOCAL_X_PIXELS = IMAGE_WIDTH / (2.0 * Math.tan(Math.toRadians(54.5 / 2.0)));
     public static final double FOCAL_Y_PIXELS = IMAGE_HEIGHT / (2.0 * Math.tan(Math.toRadians(42.0 / 2.0)));
 
@@ -104,10 +102,6 @@ public final class PollenChaseController {
         state = configurationError == null ? State.NO_TARGET : State.CONFIGURATION_REQUIRED;
     }
 
-    /**
-     * tx/ty are principal-pixel angles (right/up positive); corners are full-frame
-     * image pixels. A known sphere diameter supplies range independently of its height.
-     */
     public void update(boolean validTarget, double frameTimestamp, double frameAgeMs,
                        double txDegrees, double tyDegrees, List<List<Double>> corners, long nowNanos) {
         forwardPower = 0.0;
@@ -169,7 +163,7 @@ public final class PollenChaseController {
         double width = maxX - minX, height = maxY - minY;
         if (minX <= 2.0 || minY <= 2.0 || maxX >= IMAGE_WIDTH - 2.0
                 || maxY >= IMAGE_HEIGHT - 2.0 || width < 3.0 || height < 3.0) {
-            reject(State.INVALID_CONTOUR); // Never range from an image-clipped ball.
+            reject(State.INVALID_CONTOUR);
             return;
         }
 
@@ -185,7 +179,6 @@ public final class PollenChaseController {
         double topAngle = Math.atan(tanTy + halfHeight);
         double centerXAngle = (leftAngle + rightAngle) / 2.0;
         double centerYAngle = (bottomAngle + topAngle) / 2.0;
-        // Tangent rays to a sphere give R / sin(angular radius), without a floor-plane assumption.
         double depthX = POLLEN_RADIUS_CM * Math.cos(centerXAngle)
                 / Math.sin((rightAngle - leftAngle) / 2.0);
         double depthY = POLLEN_RADIUS_CM * Math.cos(centerYAngle)
@@ -195,7 +188,6 @@ public final class PollenChaseController {
             reject(State.INVALID_CONTOUR);
             return;
         }
-        // Prefer the nearer estimate if a partial color contour shrinks one dimension.
         double opticalForward = Math.min(depthX, depthY) * rangeScale;
         double opticalRight = opticalForward * Math.tan(centerXAngle);
         double opticalUp = opticalForward * Math.tan(centerYAngle);

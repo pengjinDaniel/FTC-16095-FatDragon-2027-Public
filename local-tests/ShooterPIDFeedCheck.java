@@ -19,7 +19,6 @@ import org.firstinspires.ftc.teamcode.subsystems.transit.Transit;
 import org.firstinspires.ftc.teamcode.subsystems.transit.TransitConstants;
 import sun.misc.Unsafe;
 
-/** Replays pitch adjustment and automatic RT feeding through ShooterPID, with and without LT. */
 public class ShooterPIDFeedCheck {
     private static Unsafe allocator;
     private static int checks;

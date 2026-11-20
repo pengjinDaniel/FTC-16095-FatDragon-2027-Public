@@ -47,7 +47,6 @@ public class OdometryCheck extends LinearOpMode {
         }
     }
 
-    // Evaluate motion in the robot axes at the start of each step.
     static final class MotionTrace {
         private final Pose2D start;
         double forwardCm, leftCm, headingDegrees;
@@ -231,7 +230,6 @@ public class OdometryCheck extends LinearOpMode {
             drive.stop();
         }
 
-        // Raw SDK counts are useful for pod activity even if the estimated pose is wrong.
         int xTicks = pinpoint.getEncoderX() - startX;
         int yTicks = pinpoint.getEncoderY() - startY;
         String issue = trace.issue(step, xTicks, yTicks);

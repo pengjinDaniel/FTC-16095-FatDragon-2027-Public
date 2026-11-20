@@ -36,7 +36,6 @@ public class AutoAimController {
         locked = false;
         withinToleranceSinceNanos = -1;
         if (acquisitionTurnDirection == 0.0) {
-            // The old pose supplies only a direction; its error never controls search speed.
             acquisitionTurnDirection = Math.signum(steeringGain)
                     * Math.signum(yawErrorDegrees) * Math.signum(turnSign);
         }
@@ -63,12 +62,9 @@ public class AutoAimController {
         updateLockState(Math.abs(yawErrorDegrees));
 
         double yawErrorRadians = Math.toRadians(yawErrorDegrees);
-        // A fixed setpoint lets FTCLib differentiate the changing error measurement.
-        // Preserve the original error-scaled feedforward outside the zero-setpoint PID.
         double output = (controller.calculate(-yawErrorRadians, 0.0)
                 + DriveConstants.autoAimKf * yawErrorRadians)
                 * DriveConstants.autoAimYawToTurnSign;
-        // Reinforce the commanded turn only outside the aim-lock tolerance.
         if (Math.abs(yawErrorDegrees) > DriveConstants.aimLockToleranceDegrees) {
             output += Math.signum(output) * staticTurnPower;
         }

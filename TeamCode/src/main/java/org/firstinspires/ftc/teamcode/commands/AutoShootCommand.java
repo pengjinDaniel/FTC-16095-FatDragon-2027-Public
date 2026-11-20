@@ -12,14 +12,7 @@ import org.firstinspires.ftc.teamcode.subsystems.vision.AutoHiveTarget;
 
 import java.util.function.BooleanSupplier;
 
-/**
- * Stops the follower and runs a distance-based shot using Pedro's field pose.
- * Schedule sequentially after a path, and keep calling follower.update() and
- * CommandScheduler.run(). Vision must also be registered with the scheduler.
- */
 public class AutoShootCommand extends CommandBase {
-    private static final long PRE_SHOT_DELAY_MS = 7_000;
-
     private final Follower follower;
     private final Shooter shooter;
     private final Intake intake;
@@ -28,17 +21,15 @@ public class AutoShootCommand extends CommandBase {
     private final BooleanSupplier localizationReady;
     private final long feedDurationMs;
     private final long timeoutMs;
-    private final boolean delayBeforeShooting;
 
     private long startedNanos;
     private long feedStartedNanos = -1;
-    private boolean waitingForDelay;
     private boolean timedOut;
     private String status = "Not started";
 
     public AutoShootCommand(Follower follower, Shooter shooter, Intake intake, Transit transit,
                             AutoHiveTarget target, BooleanSupplier localizationReady,
-                            long feedDurationMs, long timeoutMs, boolean delayBeforeShooting) {
+                            long feedDurationMs, long timeoutMs) {
         if (feedDurationMs <= 0 || timeoutMs < feedDurationMs) {
             throw new IllegalArgumentException("Shot timeout must cover a positive feed duration");
         }
@@ -50,7 +41,6 @@ public class AutoShootCommand extends CommandBase {
         this.localizationReady = localizationReady;
         this.feedDurationMs = feedDurationMs;
         this.timeoutMs = timeoutMs;
-        this.delayBeforeShooting = delayBeforeShooting;
         addRequirements(shooter, intake, transit);
     }
 
@@ -58,25 +48,17 @@ public class AutoShootCommand extends CommandBase {
     public void initialize() {
         startedNanos = System.nanoTime();
         feedStartedNanos = -1;
-        waitingForDelay = delayBeforeShooting;
         timedOut = false;
         status = "Preparing shot";
         follower.stop();
         follower.drivetrain.stop();
         transit.cancelFeeding();
         intake.updateShotFeed(false);
-        // Preserve a distance target already spun up while following the preceding path.
     }
 
     @Override
     public void execute() {
         if (isFinished()) return;
-        long now = System.nanoTime();
-        if (waitingForDelay && (now - startedNanos) / 1_000_000L >= PRE_SHOT_DELAY_MS) {
-            waitingForDelay = false;
-            startedNanos = now;
-        }
-
         Pose pose = follower.pose();
         Velocity velocity = follower.velocity();
         if (!localizationReady.getAsBoolean() || pose == null || velocity == null
@@ -88,13 +70,8 @@ public class AutoShootCommand extends CommandBase {
         }
 
         target.update(pose);
-        if (!applyShooterTarget()) {
+        if (!shooter.setDistanceTarget(target.getDistanceCm())) {
             stopForInvalidTarget("Waiting for a valid shot target");
-            return;
-        }
-
-        if (waitingForDelay) {
-            status = "Waiting " + PRE_SHOT_DELAY_MS + " ms before shot";
             return;
         }
 
@@ -121,7 +98,7 @@ public class AutoShootCommand extends CommandBase {
         if (feedStartedNanos >= 0) {
             return (now - feedStartedNanos) / 1_000_000L >= feedDurationMs;
         }
-        timedOut = !waitingForDelay && (now - startedNanos) / 1_000_000L >= timeoutMs;
+        timedOut = (now - startedNanos) / 1_000_000L >= timeoutMs;
         return timedOut;
     }
 
@@ -148,10 +125,6 @@ public class AutoShootCommand extends CommandBase {
 
     public boolean hasTimedOut() {
         return timedOut;
-    }
-
-    protected boolean applyShooterTarget() {
-        return shooter.setDistanceTarget(target.getDistanceCm());
     }
 
     private void stopForInvalidTarget(String reason) {

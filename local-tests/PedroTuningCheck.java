@@ -28,7 +28,6 @@ import org.firstinspires.ftc.teamcode.pedro.Constants;
 import org.firstinspires.ftc.teamcode.pedro.Tuning;
 import org.firstinspires.ftc.teamcode.subsystems.drive.DriveConstants;
 
-/** Exercises Pedro menu visibility, configurations, paths, guards and shutdown. */
 public class PedroTuningCheck {
     private static int checks;
 

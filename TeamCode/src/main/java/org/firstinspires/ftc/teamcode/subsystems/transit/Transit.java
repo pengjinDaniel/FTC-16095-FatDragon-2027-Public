@@ -58,7 +58,6 @@ public class Transit extends SubsystemBase {
         }
     }
 
-    // Once the gate opens, only explicit cancellation ends the reverse/feed sequence.
     public void requestFeed(boolean readyToOpenLimit) {
         if (!isFeedActive()) {
             double reverseTime = TransitConstants.feedReverseTime;
@@ -70,7 +69,6 @@ public class Transit extends SubsystemBase {
                 firingState = FiringState.WAITING;
                 return;
             }
-            // RT takes ownership before the gate moves, including while LT remains held.
             stopMotor();
             open();
             feedReverseTimeSeconds = reverseTime;

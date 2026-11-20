@@ -25,25 +25,25 @@ public class ShooterConstants {
     public static double pitchSettleTimeSeconds = 0.2;
     public static double pitchChangeResetThreshold = 0.005;
     public static double[][] nearShotPoints = {
-            {57.7, 1570, 0.6},
-            {75.0, 1590, 0.5},
-            {95.8, 1610, 0.45},
-            {113.5, 1630, 0.4},
-            {121.3, 1650, 0.35}
+            {57.7, 1550, 0.6},
+            {75.0, 1570, 0.5},
+            {95.8, 1590, 0.45},
+            {113.5, 1610, 0.4},
+            {121.3, 1630, 0.35}
     };
 
     public static double[][] farShotPoints = {
-            {130.9, 1720, 0.37},
-            {152.1, 1740, 0.3},
-            {163.0, 1760, 0.28},
-            {183.4, 1770, 0.26},
-            {215.7, 1890, 0.24}
+            {130.9, 1700, 0.37},
+            {152.1, 1720, 0.3},
+            {163.0, 1740, 0.28},
+            {183.4, 1750, 0.26},
+            {215.7, 1870, 0.24}
     };
     public static boolean velocityControlCalibrated = true;
-    public static double kP = 0.004;  //0.004
-    public static double kI = 0.0000525;
+    public static double kP = 0.004;
+    public static double kI = 0.01; // 0.000053   0.04   0.08
     public static double kD = 0.0;
-    public static double kF = 0.0005014;  //0.00063
+    public static double kF = 0.00045426; //0.00050126    0.00046189   45770
     public static double readyEnterTolerance = 0.02;
     public static double readyExitTolerance = 0.025;
     public static double readyStableTimeSeconds = 0.05;

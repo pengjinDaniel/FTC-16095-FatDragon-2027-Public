@@ -13,7 +13,6 @@ import org.firstinspires.ftc.robotcore.external.navigation.AngleUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.Pose2D;
 
-/** Spinup's three-state EKF, using local Pinpoint increments and delayed field observations. */
 public final class PinpointPoseEstimator {
     private static final long HISTORY_NANOS = 1_500_000_000L;
     private static final long MAX_ODOMETRY_GAP_NANOS = 250_000_000L;
@@ -21,7 +20,6 @@ public final class PinpointPoseEstimator {
     private static final long ANCHOR_CONFIRMATION_NANOS = 300_000_000L;
     private static final long NO_SAMPLE = Long.MIN_VALUE;
 
-    // Starting uncertainty limits for the fixed camera. Refine them with field logs.
     private static final double MAX_POSITION_STD_METERS = 0.35;
     private static final double MAX_HEADING_STD_RADIANS = Math.toRadians(25);
     private static final double VISION_HEADING_STD_RADIANS = Math.toRadians(20);
@@ -142,7 +140,6 @@ public final class PinpointPoseEstimator {
                 residualGain[row][column] -= gain[row][column];
             }
         }
-        // Joseph form keeps the updated covariance symmetric and positive under rounding.
         double[][] covariance = add(propagateCovariance(residualGain, atCapture.covariance),
                 propagateCovariance(gain, noise));
         Pose2d estimate = new Pose2d(corrected[0], corrected[1],

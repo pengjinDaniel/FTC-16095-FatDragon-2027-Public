@@ -14,8 +14,8 @@ import org.firstinspires.ftc.teamcode.subsystems.shooter.ShooterConstants;
 import java.util.Arrays;
 
 @Config
+@TeleOp(name = "Shooter pid tuner", group = "TeleOp")
 public final class ShooterPidfAutoTune extends LinearOpMode {
-    // Bench targets can be configured before measuring the shot tables.
     public static double lowTestVelocityTicksPerSecond = 1400.0;
     public static double highTestVelocityTicksPerSecond = 1650.0;
 
@@ -26,6 +26,8 @@ public final class ShooterPidfAutoTune extends LinearOpMode {
     private static final double STEP_SECONDS = 3.0;
     private static final double[] POWER_FRACTIONS = {0.25, 0.40, 0.55, 0.70, 0.85, 1.0};
     private static final int[] P_FACTORS = {1, 2, 3, 4, 5};
+    // FTCLib bounds accumulated error to +/-1, so kI also bounds integral power.
+    private static final double[] I_POWER_FRACTIONS = {0.0, 0.005, 0.01, 0.02, 0.04, 0.08};
 
     private Shooter shooter;
     private double powerLimit;
@@ -94,15 +96,7 @@ public final class ShooterPidfAutoTune extends LinearOpMode {
         double bestTime = Double.POSITIVE_INFINITY;
         for (double kP : candidates) {
             if (!Double.isFinite(kP) || kP <= 0.0) continue;
-            PIDFController candidate = new PIDFController(kP, 0.0, 0.0, kF);
-            if (!Double.isFinite(testStep(candidate, kP, low))) {
-                continue;
-            }
-            double upTime = testStep(candidate, kP, high);
-            if (!Double.isFinite(upTime)) continue;
-            double downTime = testStep(candidate, kP, low);
-            double worstTime = Math.max(upTime, downTime);
-            // Keep the lower gain when the measured difference is within one sample.
+            double worstTime = testCycle(kP, 0.0, kF, low, high);
             if (worstTime < bestTime - SAMPLE_MS / 1000.0) {
                 bestP = kP;
                 bestTime = worstTime;
@@ -115,11 +109,34 @@ public final class ShooterPidfAutoTune extends LinearOpMode {
             throw new TuningStopped("No P candidate settled at both speeds.");
         }
 
+        double[] integralCandidates = new double[I_POWER_FRACTIONS.length + 1];
+        for (int i = 0; i < I_POWER_FRACTIONS.length; i++) {
+            integralCandidates[i] = I_POWER_FRACTIONS[i] * powerLimit;
+        }
+        integralCandidates[I_POWER_FRACTIONS.length] = ShooterConstants.kI;
+        Arrays.sort(integralCandidates);
+        double bestI = Double.NaN;
+        bestTime = Double.POSITIVE_INFINITY;
+        for (double kI : integralCandidates) {
+            if (!Double.isFinite(kI) || kI < 0.0) continue;
+            double worstTime = testCycle(bestP, kI, kF, low, high);
+            if (worstTime < bestTime - SAMPLE_MS / 1000.0) {
+                bestI = kI;
+                bestTime = worstTime;
+            }
+        }
+        requireActive();
+        if (!Double.isFinite(bestI)) {
+            throw new TuningStopped("No I candidate settled at both speeds.");
+        }
+
         telemetry.addLine("Bench recommendation. Copy into ShooterConstants to apply.");
+        telemetry.addData("Tested targets", "%.0f and %.0f ticks/s", low, high);
         telemetry.addData("Worst step settling time", "%.0f ms", bestTime * 1000.0);
         telemetry.addData("kP", "%.8f", bestP);
-        telemetry.addData("kI", "0.0");
+        telemetry.addData("kI", "%.8f", bestI);
         telemetry.addData("kD", "0.0");
+        telemetry.addData("kF", "%.8f", kF);
     }
 
     private double measureFeedforward(double low, double high) {
@@ -144,7 +161,6 @@ public final class ShooterPidfAutoTune extends LinearOpMode {
         if (!Double.isFinite(lowPower) || !Double.isFinite(highPower)) {
             throw new TuningStopped("Fixed-power readings did not bracket both target speeds.");
         }
-        // Fit the two target duties to the existing controller's power = kF * target.
         double kF = (low * lowPower + high * highPower) / (low * low + high * high);
         if (highPower >= powerLimit || kF * high >= powerLimit) {
             throw new TuningStopped("The high target leaves no power for speed recovery.");
@@ -201,8 +217,20 @@ public final class ShooterPidfAutoTune extends LinearOpMode {
         throw new TuningStopped("Right encoder speed did not settle at fixed power.");
     }
 
-    private double testStep(PIDFController controller, double kP, double target) {
-        telemetry.addData("Stage", "Testing P %.6f at %.0f ticks/s", kP, target);
+    private double testCycle(double kP, double kI, double kF, double low, double high) {
+        PIDFController candidate = new PIDFController(kP, kI, 0.0, kF);
+        if (!Double.isFinite(testStep(candidate, low))) {
+            return Double.POSITIVE_INFINITY;
+        }
+        double upTime = testStep(candidate, high);
+        if (!Double.isFinite(upTime)) return Double.POSITIVE_INFINITY;
+        double downTime = testStep(candidate, low);
+        return Math.max(upTime, downTime);
+    }
+
+    private double testStep(PIDFController controller, double target) {
+        telemetry.addData("Stage", "Testing P %.6f / I %.6f at %.0f ticks/s",
+                controller.getP(), controller.getI(), target);
         telemetry.update();
         controller.reset();
         ElapsedTime timer = new ElapsedTime();
@@ -219,7 +247,6 @@ public final class ShooterPidfAutoTune extends LinearOpMode {
             if (speed == 0.0 && elapsed >= STEADY_WINDOW_SECONDS) {
                 throw new TuningStopped("No right encoder speed during closed-loop testing.");
             }
-            // Match the shooter's entry and exit bands while observing the entire step.
             double tolerance = Double.isFinite(readyAt) ? exitTolerance : enterTolerance;
             if (Math.abs(speed - target) > tolerance * target || elapsed - lastSample > 0.10) {
                 inBandSince = Double.NaN;
@@ -234,14 +261,13 @@ public final class ShooterPidfAutoTune extends LinearOpMode {
                 tailMin = Math.min(tailMin, speed);
                 tailMax = Math.max(tailMax, speed);
             }
-            // Use the same FTCLib controller and output limits as Shooter.periodic().
             output = Range.clip(controller.calculate(speed, target), 0.0, powerLimit);
             applyPower(output);
             sleep(SAMPLE_MS);
         }
         requireActive();
-        telemetry.addData("Last closed-loop step", "P %.6f / target %.0f / right %.0f to %.0f ticks/s / power %.2f",
-                kP, target, tailMin, tailMax, output);
+        telemetry.addData("Last closed-loop step", "P %.6f / I %.6f / target %.0f / right %.0f to %.0f ticks/s / power %.2f",
+                controller.getP(), controller.getI(), target, tailMin, tailMax, output);
         return Double.isFinite(readyAt) && timer.seconds() - lastSample <= 0.10
                 ? readyAt : Double.POSITIVE_INFINITY;
     }

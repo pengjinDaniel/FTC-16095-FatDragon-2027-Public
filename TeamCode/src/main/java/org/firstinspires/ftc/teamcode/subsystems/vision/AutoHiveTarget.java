@@ -10,7 +10,6 @@ import org.firstinspires.ftc.robotcore.external.navigation.DistanceUnit;
 import org.firstinspires.ftc.robotcore.external.navigation.Pose2D;
 import org.firstinspires.ftc.teamcode.subsystems.drive.DriveConstants;
 
-/** Observes one CELL without writing vision corrections into Pedro's Pinpoint localizer. */
 public class AutoHiveTarget {
     private final Vision vision;
     private final CellCluster cluster;
@@ -56,7 +55,6 @@ public class AutoHiveTarget {
             VisionMath.HiveCorrection correction = solve.correction;
             status = solve.status;
             if (correction != null && target != null) {
-                // Read HIVE tilt independently of Pinpoint translation drift.
                 double headingDifference = Math.abs(Math.IEEEremainder(
                         correction.robotPose.getHeading(AngleUnit.DEGREES)
                                 - fieldPose.getHeading(AngleUnit.DEGREES), 360.0));
@@ -71,8 +69,6 @@ public class AutoHiveTarget {
                 }
             }
         }
-        // Aim and shot calibration share the upstream CELL-opening center.
-        // Only a current observation can report HIGH; odometry supplies the yaw error.
         if (target != null) {
             yawErrorDegrees = VisionMath.coordinateYawErrorDegrees(fieldPose,
                     target[0], target[1], VisionConstants.shooterYawDegrees);
@@ -99,7 +95,6 @@ public class AutoHiveTarget {
                 && Double.isFinite(target[0]) && Double.isFinite(target[1]) ? target : null;
     }
 
-    // The custom HIVE fmap shares this route's axes, with its origin at field center.
     public static Pose2D toHiveFieldPose(Pose pose) {
         return new Pose2D(DistanceUnit.INCH, pose.x() - 72.0, pose.y() - 72.0,
                 AngleUnit.RADIANS, pose.heading());

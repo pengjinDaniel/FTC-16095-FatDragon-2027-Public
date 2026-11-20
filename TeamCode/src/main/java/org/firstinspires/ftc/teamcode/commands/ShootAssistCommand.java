@@ -104,7 +104,6 @@ public class ShootAssistCommand extends CommandBase {
         if (autoAimEnabled && !manualTranslation) {
             drive.moveRobot(forward, strafe, turnPower);
         } else {
-            // Manual translation stays headless during RT; position hold already returns robot-space powers.
             drive.moveFieldCentric(forward, strafe,
                     autoAimEnabled ? turnPower : applyDeadband(gamepadEx.getRightX()));
         }
@@ -179,7 +178,6 @@ public class ShootAssistCommand extends CommandBase {
         double distanceCm = validAimingTarget ? DistanceUnit.INCH.toCm(
                 vision.getTargetHorizontalDistanceInches()) : Double.NaN;
         if (!shooter.setDistanceTarget(distanceCm)) {
-            // Invalid targeting also cancels an already committed feed.
             resetFiringSequence(FiringState.WAITING);
             return validAimingTarget ? autoAimTurn : 0.0;
         }

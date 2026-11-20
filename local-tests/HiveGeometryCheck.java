@@ -12,7 +12,6 @@ import org.firstinspires.ftc.robotcore.external.navigation.YawPitchRollAngles;
 import org.firstinspires.ftc.teamcode.subsystems.drive.Drive;
 import sun.misc.Unsafe;
 
-/** Replays visual HIVE geometry through unconditional Pinpoint calibration and odometry continuation. */
 public class HiveGeometryCheck {
     private static int checks;
     private static final Unsafe ALLOCATOR = allocator();
@@ -56,7 +55,7 @@ public class HiveGeometryCheck {
     ) {
         double phi = Math.toRadians(-theta);
         double yaw = Math.toRadians(heading);
-        double height = 43.9497007874; // Independent official CAD pivot, not the production constant.
+        double height = 43.9497007874;
         Position position = new Position(DistanceUnit.INCH,
                 Math.cos(phi) * x - height * Math.sin(phi) + mapXErrorMeters / .0254, y,
                 height - Math.sin(phi) * x - height * Math.cos(phi) + mapZErrorMeters / .0254, 0);

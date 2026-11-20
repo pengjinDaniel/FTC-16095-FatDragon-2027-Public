@@ -4,14 +4,13 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
-/** Forward-projects sphere silhouettes to test held-ball ranging and rear-facing control. */
 public final class PollenChaseCheck {
     private static int checks;
     private static final double CAMERA_FORWARD = -12.715;
     private static final double CAMERA_HEIGHT = 20.7415;
     private static final double PITCH_UP = 50.0;
     private static final double YAW = 180.0;
-    private static final double EDGE = 17.0; // Reported center-to-rear-edge distance.
+    private static final double EDGE = 17.0;
 
     private static final class Sample {
         double tx, ty;
@@ -54,7 +53,6 @@ public final class PollenChaseCheck {
         double opticalForward = Math.cos(pitch) * cameraHorizontal + Math.sin(pitch) * deltaUp;
         double opticalUp = -Math.sin(pitch) * cameraHorizontal + Math.cos(pitch) * deltaUp;
 
-        // A tangent to the sphere defines each bounding edge of its perspective silhouette.
         double xAngle = Math.atan2(opticalRight, opticalForward);
         double yAngle = Math.atan2(opticalUp, opticalForward);
         double xRadius = Math.asin(PollenChaseController.POLLEN_RADIUS_CM

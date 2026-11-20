@@ -32,8 +32,6 @@ public enum CellCluster {
         return tuningIndex;
     }
 
-    // In the 19725 fmap, audience-side CELLS have positive field X.
-    // The center line belongs to the positive-X half for deterministic selection.
     public static Optional<CellCluster> forFieldX(Alliance alliance, double fieldXInches) {
         if (alliance == null || !Double.isFinite(fieldXInches)) {
             return Optional.empty();

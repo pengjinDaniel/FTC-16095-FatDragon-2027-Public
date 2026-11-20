@@ -10,13 +10,11 @@ import java.util.Optional;
 
 final class VisionMath {
     private static final double COINCIDENT_POSE_TOLERANCE = 1e-4;
-    // Allow small floating-point error at the configured tilt boundary.
     private static final double NUMERICAL_TILT_TOLERANCE_DEGREES = 0.01;
 
     private VisionMath() {
     }
 
-    // The fmap stores a flat HIVE; phi is the rotation from the true robot pose to MT1.
     static HiveSolveResult solveHiveFlatPose(
             Pose3D rawPose, double pivotHeightInches,
             double maxTiltDegrees, double levelToleranceDegrees
@@ -64,7 +62,6 @@ final class VisionMath {
             result.candidatePhiDegrees[i] = Math.toDegrees(phi);
             double cos = Math.cos(phi);
             double sin = Math.sin(phi);
-            // The full robot-up vector checks both pitch and roll, including +/-90 yaw.
             double upZ = sin * r02 + cos * r22;
             double levelError = Math.toDegrees(Math.acos(Math.max(-1.0, Math.min(1.0, upZ))));
             result.candidateLevelErrorsDegrees[i] = levelError;
